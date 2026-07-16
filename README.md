@@ -2,7 +2,9 @@
 
 **把 AI 的等待，交给桌面伙伴。** PeekDock 是一个 AI 协作外设：它把多个 Agent 的异步任务统一呈现在 172×320 小屏上，并支持语音派活、快速发送、Agent 切换与状态提醒。
 
-![PeekDock Mac 控制台与小屏模拟器](docs/screenshots/peekdock-console.png)
+![PeekDock Mac 控制台与小屏模拟器]<img width="1620" height="1080" alt="8088e4e6e8babc81492be6019fd1d634" src="https://github.com/user-attachments/assets/bc285352-b1a0-489b-a42c-94c4fe4d564c" /><img width="1620" height="1080" alt="29e76da2019d9103926803b62cc37fe7" src="https://github.com/user-attachments/assets/68b7b8b5-98d8-48a1-a512-fbd385e3032d" />
+
+
 
 > 当前版本是比赛 Demo MVP。没有 ESP32 实物也能用浏览器 simulator 完整演示；接入 Waveshare ESP32-S3-Touch-LCD-1.47 后，同一份任务状态会通过 USB Serial/JSON Lines 下发到 LVGL 固件。
 
