@@ -2,7 +2,7 @@
 
 **把 AI 的等待，交给桌面伙伴。** PeekDock 是一个 AI 协作外设：它把多个 Agent 的异步任务统一呈现在 172×320 小屏上，并支持语音派活、快速发送、Agent 切换与状态提醒。
 
-## 1 分钟完整 Demo
+## 1 分钟视频了解产品
 
 [![PeekDock 约 1 分钟完整 Demo 预览](docs/demo/peekdock-demo-preview.gif)](docs/demo/peekdock-demo.mp4)
 
