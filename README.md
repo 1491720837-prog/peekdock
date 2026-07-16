@@ -2,11 +2,19 @@
 
 **把 AI 的等待，交给桌面伙伴。** PeekDock 是一个 AI 协作外设：它把多个 Agent 的异步任务统一呈现在 172×320 小屏上，并支持语音派活、快速发送、Agent 切换与状态提醒。
 
-![PeekDock Mac 控制台与小屏模拟器]<img width="1620" height="1080" alt="8088e4e6e8babc81492be6019fd1d634" src="https://github.com/user-attachments/assets/bc285352-b1a0-489b-a42c-94c4fe4d564c" /><img width="1620" height="1080" alt="29e76da2019d9103926803b62cc37fe7" src="https://github.com/user-attachments/assets/68b7b8b5-98d8-48a1-a512-fbd385e3032d" />
+## 1 分钟完整 Demo
 
+[![PeekDock 约 1 分钟完整 Demo 预览](docs/demo/peekdock-demo-preview.gif)](docs/demo/peekdock-demo.mp4)
 
+**[▶ 点击打开带声音的高清 MP4 完整视频](docs/demo/peekdock-demo.mp4)** · 约 71 秒 · 1280 × 548
+
+## Demo 实机画面
+
+<img width="1620" height="1080" alt="PeekDock Demo 实机画面一" src="https://github.com/user-attachments/assets/bc285352-b1a0-489b-a42c-94c4fe4d564c" />
+<img width="1620" height="1080" alt="PeekDock Demo 实机画面二" src="https://github.com/user-attachments/assets/68b7b8b5-98d8-48a1-a512-fbd385e3032d" />
 
 > 图片版本是比赛 Demo MVP，使用串口通信。
+
 ## 为什么做 PeekDock
 
 Codex、Claude、即梦和 Browser Agent 可以同时工作，但它们的运行、等待确认、失败和完成散落在不同窗口。人必须反复切屏巡检，既打断主任务，也容易漏掉卡点。
