@@ -1,5 +1,27 @@
 # PeekDock 进度日志
 
+## 2026-07-17 PeekDock Demo MVP
+
+- 按最新产品决策删除游戏/跨设备上滑主链路，改为语音识别 + 文本 fallback + Agent 选择 + 快速发送。
+- 建立 Mac 比赛控制台与 172 × 320 simulator，复用 Codex、Claude、Jimeng、Browser Agent 角色素材。
+- Runtime Bridge 增加静态站点、WebSocket、四 Agent 状态、任务队列、mock serial、可复现 done/input/error 时间线、比赛场景 seed/reset 和完成提醒。
+- 真实 Codex/Claude/Jimeng 监听改为显式 opt-in，避免比赛现场被本机历史会话污染。
+- ESP32/LVGL 固件扩展为四页并加入 Browser Agent 素材、配色、任务类型与分页。
+- README、架构、演示主持词、硬件与协议文档完成比赛口径更新；启动脚本改为可移植路径。
+- `npm run check` 和 Node 集成测试通过；真实 Chrome 回归确认 WebSocket、静态资源、Agent 队列和 simulator 无 console error。
+- 当前环境没有可访问的目标板与完整激活的 ESP-IDF CLI，固件最终 build/flash/touch 实测按 `docs/HARDWARE.md` 留给实物环境。
+
+## 2026-07-17 Demo MVP Handoff
+
+- 读取并核对飞书产品快照、远程文档、主参考视频与七段局部实景视频，确认“语音派活 + 异步状态小屏”是当前比赛主线。
+- 在分支 `codex/peekdock-demo-mvp` 完成 Node.js Runtime Bridge 的四 Agent 模型、HTTP API、WebSocket、SSE、mock serial、事件流与确定性 demo timeline。
+- 新增 Mac 控制台和 172×320 simulator，支持语音录制/转写状态、文本 fallback、Agent/场景选择、任务队列、状态切换、完成提醒和一键演示。
+- 已用真实浏览器验证页面布局、WebSocket live、四 Agent 切换、Browser 完成态和“老板，我做好啦”提醒；截图保存到 `docs/screenshots/peekdock-console.png`。
+- ESP32/LVGL 固件从三页扩展到 Codex、Claude、Jimeng、Browser 四页，Browser 使用仓库已有 LVGL 帧；协议缓存原本已支持四任务。
+- 新增 Node 集成测试，覆盖控制台、四 Agent idle、比赛 seed、`running → needs_input → completed` 与 WebSocket 权威状态。
+- README、技术架构、Demo 指南、硬件上下文和协议已按新产品方向重写；游戏和旧上滑跨设备跳转已明确移出范围。
+- 当前开发机没有 `idf.py` 和目标 ESP32 实物，因此本轮固件无法重新 build/flash；源码、CMake、分区与 simulator 路径均保留，硬件构建命令和限制已文档化。
+
 ## 2026-06-01 Center UI Cleanup Pass
 
 - 针对用户最新指出的中部异常浮层，重新检查 `src/ui/screens/peekdock_screen.cpp`，确认真正的视觉来源不是右上角状态点，而是内容区中段历史遗留的 `tool_chip` 胶囊层。

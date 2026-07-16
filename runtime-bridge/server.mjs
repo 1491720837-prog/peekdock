@@ -1,27 +1,33 @@
 import { createReadStream, createWriteStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createServer } from "node:http";
-import { extname, join, normalize, resolve } from "node:path";
+import { extname, join, normalize, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { exec, execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { WebSocketServer, WebSocket } from "ws";
 
-const rootDir = resolve(new URL("..", import.meta.url).pathname);
+const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const publicDir = join(rootDir, "runtime-bridge", "public");
 const serialPort = process.env.PEEKDOCK_SERIAL_PORT || "/dev/cu.usbmodem1301";
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "127.0.0.1";
 const headlessMode = process.env.PEEKDOCK_HEADLESS === "1";
 const codexSessionsDir = process.env.PEEKDOCK_CODEX_SESSIONS_DIR || join(homedir(), ".codex", "sessions");
-const codexMonitorEnabled = process.env.PEEKDOCK_CODEX_MONITOR !== "0";
+const realMonitorsEnabled = process.env.PEEKDOCK_REAL_MONITORS === "1";
+const codexMonitorEnabled = realMonitorsEnabled || process.env.PEEKDOCK_CODEX_MONITOR === "1";
 const claudeProjectsDir = process.env.PEEKDOCK_CLAUDE_PROJECTS_DIR || join(homedir(), ".claude", "projects");
-const claudeMonitorEnabled = process.env.PEEKDOCK_CLAUDE_MONITOR !== "0";
-const jimengMonitorEnabled = process.env.PEEKDOCK_JIMENG_MONITOR !== "0";
-const AGENTS = ["codex", "claude", "jimeng"];
+const claudeMonitorEnabled = realMonitorsEnabled || process.env.PEEKDOCK_CLAUDE_MONITOR === "1";
+const jimengMonitorEnabled = realMonitorsEnabled || process.env.PEEKDOCK_JIMENG_MONITOR === "1";
+const AGENTS = ["codex", "claude", "jimeng", "browser"];
 const completionSoundPath = process.env.PEEKDOCK_COMPLETE_SOUND || "/System/Library/Sounds/Glass.aiff";
 const startSoundPath = process.env.PEEKDOCK_START_SOUND || "/System/Library/Sounds/Pop.aiff";
+const soundsEnabled = process.env.PEEKDOCK_SOUNDS !== "0";
 const jimengUrl = process.env.PEEKDOCK_JIMENG_URL || "https://jimeng.jianying.com/";
 const preferredBrowser = process.env.PEEKDOCK_BROWSER || "chrome";
-const bridgeBuildId = "review-debug-20260531-2030";
+const bridgeBuildId = "peekdock-demo-mvp-20260717";
 
 const clients = new Set();
+const websocketClients = new Set();
 const state = {
   mode: "clean",
   phase: "idle",
@@ -33,9 +39,11 @@ const state = {
   tasksByAgent: {
     codex: null,
     claude: null,
-    jimeng: null
+    jimeng: null,
+    browser: null
   },
-  lastEvent: null
+  lastEvent: null,
+  eventLog: []
 };
 
 let serialWriter = null;
@@ -76,14 +84,16 @@ let manualAgentLockUntil = 0;
 const completeToIdleTimers = {
   codex: null,
   claude: null,
-  jimeng: null
+  jimeng: null,
+  browser: null
 };
+const mockTimersByAgent = Object.fromEntries(AGENTS.map((agent) => [agent, []]));
 const completedSoundTaskIds = new Set();
 const startedSoundTaskIds = new Set();
 const codexInitialTailBytes = 64 * 1024;
 const codexInitialReplayMs = 10_000;
 const codexSettleMs = 45_000;
-const completeToIdleMs = 5_000;
+const completeToIdleMs = Number(process.env.PEEKDOCK_COMPLETE_HOLD_MS || 30_000);
 const manualAgentLockMs = 90_000;
 const phaseProgressRanges = {
   queued: [4, 10],
@@ -130,6 +140,16 @@ const agentMeta = {
     completedKey: "jimeng_completed",
     failedKey: "jimeng_error",
     idleKey: "jimeng_idle"
+  },
+  browser: {
+    source: "browser",
+    agentName: "Browser Agent",
+    taskType: "research",
+    scene: "research_room",
+    runningKey: "browser_working",
+    completedKey: "browser_completed",
+    failedKey: "browser_error",
+    idleKey: "browser_idle"
   }
 };
 
@@ -150,7 +170,7 @@ function contentType(filePath) {
 function safeResolve(base, urlPath) {
   const withoutQuery = decodeURIComponent(urlPath.split("?")[0]);
   const target = normalize(join(base, withoutQuery));
-  if (!target.startsWith(base)) return null;
+  if (target !== base && !target.startsWith(`${base}${sep}`)) return null;
   return target;
 }
 
@@ -197,7 +217,10 @@ function publicState() {
     lastPrompt: state.lastPrompt,
     currentTask: publicTask(),
     tasksByAgent: Object.fromEntries(AGENTS.map((agent) => [agent, toPublicTask(state.tasksByAgent[agent])])),
-    lastEventType: state.lastEvent?.type || null
+    lastEventType: state.lastEvent?.type || null,
+    agentOrder: AGENTS,
+    transport: state.serialConnected ? "usb-serial" : "mock-serial",
+    eventLog: state.eventLog.slice(-40)
   };
 }
 
@@ -258,6 +281,7 @@ function jimengStableProgress(status, previousTask, explicitProgress) {
 function agentFromSource(source = "") {
   if (source === "claude") return "claude";
   if (source === "jimeng") return "jimeng";
+  if (source === "browser" || source === "browser_agent") return "browser";
   return "codex";
 }
 
@@ -375,7 +399,9 @@ function baseTaskForAgent(agent, title = "") {
     ? (realClaudeTaskId || `claude_real_${Date.now()}`)
     : agent === "jimeng"
       ? `jimeng_local_${Date.now()}`
-      : (realCodexTaskId || `codex_real_${Date.now()}`);
+      : agent === "browser"
+        ? `browser_mock_${Date.now()}`
+        : (realCodexTaskId || `codex_real_${Date.now()}`);
   return {
     task_id: taskId,
     source: meta.source,
@@ -427,6 +453,7 @@ function summarizeTitleForDock(input = "", fallback = "Task") {
 }
 
 function playCompletionSound(task) {
+  if (!soundsEnabled) return;
   const taskId = task?.task_id || "";
   if (!taskId || completedSoundTaskIds.has(taskId)) return;
   completedSoundTaskIds.add(taskId);
@@ -440,6 +467,7 @@ function playCompletionSound(task) {
 }
 
 function playStartSound(task) {
+  if (!soundsEnabled) return;
   const taskId = task?.task_id || "";
   if (!taskId || startedSoundTaskIds.has(taskId)) return;
   startedSoundTaskIds.add(taskId);
@@ -531,6 +559,10 @@ function openAgentOnMac(source = state.currentAgent, browser = preferredBrowser)
     });
     return;
   }
+  if (source === "browser" || source === "browser_agent") {
+    execFile("open", ["https://www.google.com/search?q=AI+agent+hardware+research"], { timeout: 4000 }, () => {});
+    return;
+  }
   execFile("open", ["-b", "com.openai.codex"], { timeout: 4000 }, (error) => {
     if (error) {
       console.warn(`openAgentOnMac codex open failed: ${error.message}`);
@@ -542,7 +574,19 @@ function openAgentOnMac(source = state.currentAgent, browser = preferredBrowser)
 
 function broadcast(event) {
   state.lastEvent = event;
+  const logEntry = {
+    at: new Date().toISOString(),
+    type: event.type || "event",
+    source: event.task?.source || event.source || event.state?.currentAgent || "system",
+    status: event.task?.status || event.state?.phase || ""
+  };
+  state.eventLog.push(logEntry);
+  if (state.eventLog.length > 80) state.eventLog.splice(0, state.eventLog.length - 80);
   for (const client of clients) sendSse(client, event);
+  const payload = JSON.stringify(event);
+  for (const client of websocketClients) {
+    if (client.readyState === WebSocket.OPEN) client.send(payload);
+  }
 }
 
 function emitState() {
@@ -856,23 +900,86 @@ function syncDockSnapshot() {
   });
 }
 
-function createTask(prompt) {
+function createTask(prompt, agent = "codex") {
+  const normalizedAgent = AGENTS.includes(agent) ? agent : "codex";
+  const meta = agentMeta[normalizedAgent];
+  const resultByAgent = {
+    codex: "/demo-results/codex-review.html",
+    claude: "/demo-results/claude-draft.html",
+    jimeng: "/demo-results/jimeng-preview.html",
+    browser: "/demo-results/browser-research.html"
+  };
   return {
-    task_id: `codex_${Date.now()}`,
-    source: "codex",
-    agent_name: "CodeX",
-    title: summarizeTitleForDock(prompt, "Codex task"),
-    task_type: "website build",
+    task_id: `${normalizedAgent}_${Date.now()}`,
+    source: meta.source,
+    agent_name: meta.agentName,
+    title: summarizeTitleForDock(prompt, `${meta.agentName} task`),
+    task_type: meta.taskType,
     status: "running",
-    status_text: "crafting interface...",
-    progress: 18,
+    status_text: normalizedAgent === "jimeng" ? "starting canvas..." : normalizedAgent === "browser" ? "planning research..." : "understanding request...",
+    progress: 8,
     updated_at: new Date().toISOString(),
-    result_uri: "/demo-results/codex-review.html",
+    result_uri: resultByAgent[normalizedAgent],
     actions: [],
     screen_role: "dock_working",
-    agent_scene: "coding_room",
-    animation_key: "codex_running"
+    agent_scene: meta.scene,
+    animation_key: meta.runningKey
   };
+}
+
+function clearMockAgentTimers(agent) {
+  for (const timer of mockTimersByAgent[agent] || []) clearTimeout(timer);
+  mockTimersByAgent[agent] = [];
+}
+
+function applyMockAgentStatus(agent, taskId, status, statusText, progress = -1) {
+  const task = taskForAgent(agent);
+  if (!task || (taskId && task.task_id !== taskId)) return null;
+  const nextTask = {
+    ...task,
+    status,
+    status_text: statusText,
+    progress: status === "completed" ? 100 : progress,
+    actions: status === "completed" ? ["open_result"] : status === "needs_input" ? ["provide_input"] : status === "failed" ? ["retry"] : [],
+    animation_key: animationKeyFor(agent, status),
+    updated_at: new Date().toISOString()
+  };
+  setTaskForAgent(agent, nextTask);
+  if (state.currentAgent === agent) {
+    state.currentTask = nextTask;
+    state.phase = status;
+  }
+  if (state.agentLocation === "dock") {
+    dispatchToDock({ type: "task_update", task: nextTask });
+    syncDockSnapshot();
+  } else {
+    emitState();
+  }
+  if (status === "completed") {
+    playCompletionSound(nextTask);
+    scheduleIdleAfterCompletion(agent, nextTask.task_id);
+  }
+  return nextTask;
+}
+
+function scheduleMockAgentTimeline(agent, taskId, scenario = "done") {
+  clearMockAgentTimers(agent);
+  const phases = agent === "jimeng"
+    ? [[700, "running", "mixing colors...", 24], [1900, "running", "rendering frames...", 58]]
+    : agent === "browser"
+      ? [[700, "running", "opening sources...", 22], [1900, "running", "checking evidence...", 61]]
+      : [[700, "running", "thinking...", 18], [1900, "running", "using tools...", 54]];
+  for (const [delay, status, text, progress] of phases) {
+    mockTimersByAgent[agent].push(setTimeout(() => applyMockAgentStatus(agent, taskId, status, text, progress), delay));
+  }
+  if (scenario === "input_required") {
+    mockTimersByAgent[agent].push(setTimeout(() => applyMockAgentStatus(agent, taskId, "needs_input", "需要你确认一个细节", -1), 3400));
+  } else if (scenario === "error") {
+    mockTimersByAgent[agent].push(setTimeout(() => applyMockAgentStatus(agent, taskId, "failed", "任务遇到问题，可重试", -1), 3400));
+  } else {
+    mockTimersByAgent[agent].push(setTimeout(() => applyMockAgentStatus(agent, taskId, "running", "finalizing...", 86), 3400));
+    mockTimersByAgent[agent].push(setTimeout(() => applyMockAgentStatus(agent, taskId, "completed", "老板，我做好啦", 100), 5200));
+  }
 }
 
 function createRealCodexTask(title = "Real Codex task") {
@@ -2367,11 +2474,12 @@ function scheduleTaskTimeline() {
   taskCompleteTimer = setTimeout(completeTask, 4200);
 }
 
-function startTask(prompt) {
+function startTask(prompt, agent = "codex", scenario = "done") {
   clearMockTimers();
+  const normalizedAgent = AGENTS.includes(agent) ? agent : "codex";
   state.lastPrompt = prompt;
-  setTaskForAgent("codex", createTask(prompt));
-  setCurrentAgent("codex");
+  setTaskForAgent(normalizedAgent, createTask(prompt, normalizedAgent));
+  setCurrentAgent(normalizedAgent);
   state.phase = "handoff";
 
   if (state.mode === "clean") {
@@ -2384,8 +2492,65 @@ function startTask(prompt) {
 
   state.phase = "running";
   emitState();
-  scheduleTaskTimeline();
+  playStartSound(state.currentTask);
+  scheduleMockAgentTimeline(normalizedAgent, state.currentTask.task_id, scenario);
   return state.currentTask;
+}
+
+function idleTaskForAgent(agent) {
+  const meta = agentMeta[agent];
+  return {
+    task_id: `${agent}_idle`,
+    source: meta.source,
+    agent_name: meta.agentName,
+    title: `${meta.agentName} 待命中`,
+    task_type: meta.taskType,
+    status: "idle",
+    status_text: "等待新任务",
+    progress: -1,
+    updated_at: new Date().toISOString(),
+    result_uri: "",
+    actions: [],
+    screen_role: "dock_working",
+    agent_scene: meta.scene,
+    animation_key: meta.idleKey
+  };
+}
+
+function resetDemoState() {
+  clearMockTimers();
+  for (const agent of AGENTS) {
+    clearMockAgentTimers(agent);
+    if (completeToIdleTimers[agent]) clearTimeout(completeToIdleTimers[agent]);
+    completeToIdleTimers[agent] = null;
+    state.tasksByAgent[agent] = idleTaskForAgent(agent);
+  }
+  setCurrentAgent("codex");
+  state.phase = "idle";
+  state.agentLocation = "dock";
+  state.lastPrompt = "";
+  syncDockSnapshot();
+  emitState();
+}
+
+function seedDemoState() {
+  resetDemoState();
+  const seed = {
+    codex: ["running", "running checks...", 68, "修复首页按钮样式"],
+    claude: ["needs_input", "需要确认文案语气", -1, "整理比赛路演稿"],
+    jimeng: ["completed", "老板，我做好啦", 100, "生成产品视觉概念"],
+    browser: ["running", "checking 8 sources...", 47, "调研 AI 外设竞品"]
+  };
+  for (const [agent, [status, statusText, progress, title]] of Object.entries(seed)) {
+    const task = { ...createTask(title, agent), task_id: `${agent}_seed`, title, status, status_text: statusText, progress };
+    task.actions = status === "completed" ? ["open_result"] : status === "needs_input" ? ["provide_input"] : [];
+    task.animation_key = animationKeyFor(agent, status);
+    state.tasksByAgent[agent] = task;
+  }
+  setCurrentAgent("codex");
+  state.phase = "running";
+  syncDockSnapshot();
+  emitState();
 }
 
 function readBody(req) {
@@ -2416,6 +2581,8 @@ function serveFile(res, base, urlPath) {
   createReadStream(filePath).pipe(res);
   return true;
 }
+
+const websocketServer = new WebSocketServer({ noServer: true });
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
@@ -2449,11 +2616,54 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const prompt = String(body.prompt || "").trim().slice(0, 140);
       if (!prompt) return sendJson(res, 400, { ok: false, error: "Prompt is required" });
-      const task = startTask(prompt);
+      const agent = String(body.agent || "codex");
+      const scenario = ["done", "input_required", "error"].includes(body.scenario) ? body.scenario : "done";
+      if (!AGENTS.includes(agent)) return sendJson(res, 400, { ok: false, error: "Unknown agent" });
+      const task = startTask(prompt, agent, scenario);
       return sendJson(res, 200, { ok: true, serialConnected: state.serialConnected, taskId: task.task_id, state: publicState() });
     } catch (error) {
       return sendJson(res, 400, { ok: false, error: error.message });
     }
+  }
+
+  if (url.pathname === "/api/task-status" && req.method === "POST") {
+    try {
+      const body = await readBody(req);
+      const agent = String(body.agent || state.currentAgent);
+      const status = String(body.status || "running");
+      const supported = ["idle", "running", "needs_input", "completed", "failed"];
+      if (!AGENTS.includes(agent) || !supported.includes(status)) {
+        return sendJson(res, 400, { ok: false, error: "Unknown agent or status" });
+      }
+      clearMockAgentTimers(agent);
+      let task = taskForAgent(agent);
+      if (!task) {
+        task = createTask(body.title || `${agentMeta[agent].agentName} demo task`, agent);
+        setTaskForAgent(agent, task);
+      }
+      const statusText = String(body.statusText || ({
+        idle: "等待新任务",
+        running: "working...",
+        needs_input: "需要你确认一个细节",
+        completed: "老板，我做好啦",
+        failed: "任务遇到问题，可重试"
+      }[status])).slice(0, 90);
+      const progress = typeof body.progress === "number" ? body.progress : status === "completed" ? 100 : status === "running" ? 52 : -1;
+      const updated = applyMockAgentStatus(agent, task.task_id, status, statusText, progress);
+      return sendJson(res, 200, { ok: true, task: toPublicTask(updated), state: publicState() });
+    } catch (error) {
+      return sendJson(res, 400, { ok: false, error: error.message });
+    }
+  }
+
+  if (url.pathname === "/api/demo/reset" && req.method === "POST") {
+    resetDemoState();
+    return sendJson(res, 200, { ok: true, state: publicState() });
+  }
+
+  if (url.pathname === "/api/demo/seed" && req.method === "POST") {
+    seedDemoState();
+    return sendJson(res, 200, { ok: true, state: publicState() });
   }
 
   if (url.pathname === "/api/set-mode" && req.method === "POST") {
@@ -2583,7 +2793,26 @@ const server = createServer(async (req, res) => {
     if (serveFile(res, rootDir, url.pathname.slice(1))) return;
   }
 
+  if (!url.pathname.startsWith("/api/") && serveFile(res, publicDir, url.pathname)) return;
+
   sendJson(res, 404, { ok: false, error: "Not found" });
+});
+
+server.on("upgrade", (req, socket, head) => {
+  const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+  if (url.pathname !== "/ws") {
+    socket.destroy();
+    return;
+  }
+  websocketServer.handleUpgrade(req, socket, head, (client) => websocketServer.emit("connection", client, req));
+});
+
+websocketServer.on("connection", (client) => {
+  websocketClients.add(client);
+  client.send(JSON.stringify({ type: "state", state: publicState() }));
+  client.send(JSON.stringify({ type: "serial_status", connected: state.serialConnected, transport: state.serialConnected ? "usb-serial" : "mock-serial" }));
+  client.on("close", () => websocketClients.delete(client));
+  client.on("error", () => websocketClients.delete(client));
 });
 
 function startRuntimeMonitors(serialMissingText = " (not present)") {
@@ -2598,11 +2827,13 @@ console.log(`PeekDock bridge build: ${bridgeBuildId}`);
 
 if (headlessMode) {
   server.listen(port, host, () => {
+    resetDemoState();
     startRuntimeMonitors(" (not present)");
     console.log(`PeekDock bridge running in headless mode on http://${host}:${port}`);
   });
 } else {
   server.listen(port, host, () => {
+    resetDemoState();
     startRuntimeMonitors(" (not present, UI-only mode)");
     console.log(`PeekDock bridge listening on http://${host}:${port}`);
   });

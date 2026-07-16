@@ -1,5 +1,28 @@
 # PeekDock 架构记录
 
+## 2026-07-17 Demo MVP 权威架构
+
+本节覆盖下方关于桌宠、游戏和跨屏跳转的历史描述。
+
+- 主链路：Mac 控制台语音/文本派活 → Runtime Bridge 统一状态 → ESP32 或 172 × 320 simulator → `needs_input` / 完成提醒。
+- 游戏与旧上滑跨设备跳转已经删除；横向 Agent 切换保留，语音发送成为主要输入交互。
+- 当前四个固定 Agent 槽位为 `codex`、`claude`、`jimeng`、`browser`。
+- `runtime-bridge/server.mjs` 服务控制台、维护队列/状态机、广播 WebSocket/SSE，并在设备存在时写入 USB JSONL。
+- `runtime-bridge/public/` 是当前 Mac 端产品入口；历史桌宠实验不属于 MVP 验收主路径。
+- 真实本地 Agent 监听必须显式设置 `PEEKDOCK_REAL_MONITORS=1`；比赛默认使用可复现 mock adapters。
+- 无硬件是受支持配置：Bridge 显示 `mock-serial`，simulator 消费与真机相同的 canonical state。
+- 当前协议和架构图以 `protocol/README.md`、`docs/ARCHITECTURE.md` 为准。
+
+## 2026-07-17 Demo MVP 主架构
+
+- 产品主链路已改为“语音/文本派活 → Runtime Bridge → 小屏/simulator 状态监控 → 介入或完成提醒”。游戏和旧上滑跨设备跳转均不在现行范围。
+- `runtime-bridge/public/` 是当前 Mac 控制台：语音转写、文本 fallback、四 Agent 选择、任务队列、状态流和 172×320 simulator。
+- `runtime-bridge/server.mjs` 是唯一权威状态源，默认使用确定性 mock adapters；真实 Codex/Claude/Jimeng 只读监控需要 `PEEKDOCK_REAL_MONITORS=1` 显式开启。
+- Web 客户端优先使用 `/ws` WebSocket，失败时回退 `/events` SSE。ESP32 继续使用 USB Serial JSON Lines；串口缺席时明确降级为 mock serial。
+- 固定 Agent 页从三页扩展到四页：Codex、Claude、Jimeng、Browser Agent。固件 `PeekDockEvent.tasks[4]` 与 UI task cache 保持一致。
+- `tests/bridge.test.mjs` 以独立子进程验证控制台、四 Agent、演示种子、状态流和 WebSocket。
+- 比赛截图位于 `docs/screenshots/peekdock-console.png`，演示路径见 `docs/DEMO_GUIDE.md`，完整架构见 `docs/ARCHITECTURE.md`。
+
 ## 当前仓库结构
 
 - `assets/README.md`: PNG 资产放置、命名和 P0 最小资产要求。
@@ -8,7 +31,8 @@
 - `assets/lvgl/`: 由 LVGL Image Converter 输出的 `C` image resources。当前流程使用仓库内 `managed_components/lvgl__lvgl/scripts/LVGLImage.py` 离线批量生成，默认格式为 `RGB565A8`。
 - `assets/p0-asset-manifest.md`: P0 demo 使用的最小 PNG 资产清单，以及缺失/可替代资产说明。
 - `demo-results/`: P0 快操打开的本地 HTML 结果页，模拟 Codex/Claude/Jimeng 交付物。
-- `runtime-bridge/server.mjs`: 当前唯一的 helper/bridge 主入口。它负责读取 Codex、Claude Code、JiMeng 的真实状态，统一任务模型，通过 USB Serial/JTAG 给 ESP32 发 `task_update` / `task_snapshot` / `transition_event`，并接收小屏动作事件。
+- `runtime-bridge/server.mjs`: 当前唯一的 helper/bridge 主入口。它负责 mock/真实 adapter、统一任务模型、HTTP/WebSocket/SSE、USB Serial 和小屏动作。
+- `runtime-bridge/public/`: 当前 Mac 控制台和 172×320 小屏 simulator。
 - `scripts/start-peekdock.sh`: 当前 helper 启动脚本；默认串口为 `/dev/cu.usbmodem1301`，默认 host 为 `127.0.0.1`。
 - `scripts/com.peekdock.bridge.plist`: 当前 LaunchAgent 模板，用来把 `runtime-bridge/server.mjs` 作为后台 helper 拉起。
 - `legacy/mac-demo-experiments/`: 旧的 Mac 端网页/桌宠实验，保留作历史参考，不再是当前主链路。
@@ -44,9 +68,9 @@
 
 P0 采用三层结构：
 
-1. Mac agent UI：负责闲置态、任务发起离开动画、完成召回动画和后台入口。
-2. Mac/helper bridge：作为权威状态层，负责采集/模拟任务、归一化、发送状态、执行快操。
-3. ESP32-S3 小屏固件：负责工作态展示、多 Agent 横滑、状态动画和动作输入。
+1. Mac 控制台：负责语音/文本派活、Agent 管理、任务队列、状态流与 simulator。
+2. Mac/helper bridge：作为权威状态层，负责采集/模拟任务、归一化、发送状态、执行白名单快操。
+3. ESP32-S3 小屏固件：负责工作态展示、四 Agent 横滑、状态动画和动作输入。
 
 ## 2026-05-31 Bridge 行为补充
 

@@ -11,6 +11,8 @@ managed_components/
 .tools/
 dist/
 coverage/
+.playwright-cli/
+output/
 *.log
 *.tmp
 tmp/

@@ -21,6 +21,8 @@ idf_component_register(
         "../assets/lvgl/jimeng_running_p2_b.c"
         "../assets/lvgl/jimeng_completed_p2.c"
         "../assets/lvgl/jimeng_completed_p2_b.c"
+        "../assets/lvgl/browser_working_01.c"
+        "../assets/lvgl/browser_working_02.c"
         "protocol/task_protocol.cpp"
         "ui/screens/peekdock_screen.cpp"
     INCLUDE_DIRS

@@ -1,0 +1,19 @@
+{
+  "name": "peekdock-demo-mvp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "PeekDock AI collaboration dock demo runtime, console, simulator, and firmware protocol.",
+  "scripts": {
+    "start": "node runtime-bridge/server.mjs",
+    "dev": "PEEKDOCK_HEADLESS=0 node --watch runtime-bridge/server.mjs",
+    "check": "node --check runtime-bridge/server.mjs && node --check runtime-bridge/public/app.js",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}

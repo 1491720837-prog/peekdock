@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#080a0f" />
+    <title>PeekDock · AI 员工任务舱</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='5' width='26' height='24' rx='8' fill='%23080a0f' stroke='%23b8ff5d' stroke-width='2'/%3E%3Cpath d='M9 4V1m14 3V1' stroke='%23b8ff5d' stroke-width='2'/%3E%3Crect x='9' y='13' width='4' height='8' rx='2' fill='%23b8ff5d'/%3E%3Crect x='15' y='13' width='4' height='8' rx='2' fill='%23b8ff5d'/%3E%3Crect x='21' y='13' width='4' height='8' rx='2' fill='%23b8ff5d'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="noise" aria-hidden="true"></div>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="PeekDock 首页">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span><b>PeekDock</b><small>AI EMPLOYEE DOCK</small></span>
+      </a>
+      <div class="connection-cluster">
+        <span class="connection-pill" id="bridgeStatus"><i></i> Bridge connecting</span>
+        <span class="connection-pill muted" id="serialStatus"><i></i> Mock serial</span>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="agent-rail panel">
+        <div class="panel-heading">
+          <div><span class="eyebrow">TEAM</span><h2>AI 员工</h2></div>
+          <span class="count" id="activeCount">0 active</span>
+        </div>
+        <div class="agent-list" id="agentList"></div>
+        <div class="rail-note">
+          <span>STATUS STANDARD</span>
+          <p>idle · working · input required · done · error</p>
+        </div>
+      </aside>
+
+      <section class="command-column">
+        <section class="hero-copy">
+          <span class="eyebrow">DESK COMPANION / RUNTIME BRIDGE</span>
+          <h1>把 AI 的等待，<br /><em>交给桌面伙伴。</em></h1>
+          <p>语音派活、统一看状态。主屏继续创作，重要进展会自己浮上来。</p>
+        </section>
+
+        <section class="composer panel">
+          <div class="composer-topline">
+            <label for="agentSelect">发送给</label>
+            <select id="agentSelect" aria-label="选择 Agent">
+              <option value="codex">Codex · 工程师</option>
+              <option value="claude">Claude · 策划</option>
+              <option value="jimeng">Jimeng · 艺术家</option>
+              <option value="browser">Browser Agent · 侦探</option>
+            </select>
+            <select id="scenarioSelect" aria-label="选择演示结果">
+              <option value="done">自动完成</option>
+              <option value="input_required">需要输入</option>
+              <option value="error">演示错误</option>
+            </select>
+          </div>
+          <textarea id="promptInput" maxlength="140" rows="3" placeholder="说点什么，或输入任务…">帮我修一下首页按钮样式 bug，并检查响应式布局</textarea>
+          <div class="voice-feedback" id="voiceFeedback" aria-live="polite">
+            <span class="voice-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+            <span id="voiceState">可使用语音，也可直接输入文字</span>
+          </div>
+          <div class="composer-actions">
+            <button class="voice-button" id="voiceButton" type="button" aria-pressed="false">
+              <span class="mic-icon" aria-hidden="true"></span><b>按下说话</b>
+            </button>
+            <button class="send-button" id="sendButton" type="button">
+              发送任务 <span aria-hidden="true">↗</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="queue panel">
+          <div class="panel-heading queue-heading">
+            <div><span class="eyebrow">LIVE QUEUE</span><h2>任务状态流</h2></div>
+            <div class="demo-buttons">
+              <button data-demo="reset">全部待命</button>
+              <button data-demo="seed" class="accent">一键演示</button>
+            </div>
+          </div>
+          <div class="queue-list" id="queueList"></div>
+        </section>
+      </section>
+
+      <aside class="dock-column">
+        <section class="dock-stage panel">
+          <div class="panel-heading dock-heading">
+            <div><span class="eyebrow">172 × 320</span><h2>小屏 Simulator</h2></div>
+            <span class="live-badge"><i></i> LIVE</span>
+          </div>
+          <div class="dock-shell">
+            <div class="dock-crown"></div>
+            <div class="dock-screen" id="dockScreen" tabindex="0" aria-label="PeekDock 小屏模拟器，可左右滑动切换 Agent">
+              <div class="screen-glow"></div>
+              <div class="screen-top">
+                <span class="agent-pill" id="dockAgentName">CODEX</span>
+                <span class="status-signal" id="dockSignal"></span>
+              </div>
+              <img class="agent-art" id="dockAgentArt" alt="Codex 像素角色" />
+              <div class="dock-copy">
+                <strong id="dockPrimary">Idle</strong>
+                <span id="dockTaskTitle">等待新任务</span>
+              </div>
+              <div class="dock-alert" id="dockAlert">老板，我做好啦</div>
+              <div class="dock-progress" id="dockProgress"><i id="dockProgressFill"></i></div>
+              <div class="dock-progress-label" id="dockProgressLabel">0%</div>
+              <div class="page-dots" id="pageDots"></div>
+            </div>
+            <div class="dock-foot"><span></span><span></span></div>
+          </div>
+          <div class="sim-controls">
+            <button id="prevAgent" aria-label="上一个 Agent">←</button>
+            <span>横滑 / 点击切换 Agent</span>
+            <button id="nextAgent" aria-label="下一个 Agent">→</button>
+          </div>
+          <div class="quick-states">
+            <button data-status="running">Working</button>
+            <button data-status="needs_input">Input</button>
+            <button data-status="completed">Done</button>
+            <button data-status="failed">Error</button>
+          </div>
+        </section>
+
+        <section class="event-panel panel">
+          <div class="event-title"><span>Bridge event stream</span><span id="eventCount">0 events</span></div>
+          <ol id="eventLog"></ol>
+        </section>
+      </aside>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

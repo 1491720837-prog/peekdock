@@ -26,6 +26,8 @@ LV_IMAGE_DECLARE(jimeng_running_p2);
 LV_IMAGE_DECLARE(jimeng_running_p2_b);
 LV_IMAGE_DECLARE(jimeng_completed_p2);
 LV_IMAGE_DECLARE(jimeng_completed_p2_b);
+LV_IMAGE_DECLARE(browser_working_01);
+LV_IMAGE_DECLARE(browser_working_02);
 
 static lv_obj_t* content_layer = nullptr;
 static lv_obj_t* title_label = nullptr;
@@ -49,7 +51,7 @@ static lv_obj_t* mood_label = nullptr;
 static lv_obj_t* mood_bubble = nullptr;
 static lv_obj_t* tool_chip = nullptr;
 static lv_obj_t* tool_dot = nullptr;
-static lv_obj_t* page_dots[3] = {};
+static lv_obj_t* page_dots[4] = {};
 static lv_obj_t* burst_particles[10] = {};
 static lv_timer_t* animation_timer = nullptr;
 static lv_timer_t* hero_drag_timer = nullptr;
@@ -73,7 +75,7 @@ static int hero_drag_applied_progress = -1;
 static volatile int hero_drag_requested_progress = -1;
 static volatile int hero_drag_requested_command = 0;
 static bool hero_dragging = false;
-static bool hero_hidden_for_page[3] = {};
+static bool hero_hidden_for_page[4] = {};
 static char last_rendered_task_id[64] = {};
 static char last_rendered_status[24] = {};
 static char typewriter_text[96] = {};
@@ -138,17 +140,23 @@ static bool is_jimeng_task(const PeekDockTask* task) {
     return task && std::strcmp(task->source, "jimeng") == 0;
 }
 
+static bool is_browser_task(const PeekDockTask* task) {
+    return task && (std::strcmp(task->source, "browser") == 0 || std::strcmp(task->source, "browser_agent") == 0);
+}
+
 static lv_color_t agent_color(const PeekDockTask* task) {
     if (is_claude_task(task)) return lv_color_hex(0xf29b52);
     if (is_jimeng_task(task)) return lv_color_hex(0xa875ff);
+    if (is_browser_task(task)) return lv_color_hex(0x61b7ff);
     return lv_color_hex(0x69c86e);
 }
 
 static void apply_hero_layout(const PeekDockTask* task) {
     const bool is_claude = is_claude_task(task);
     const bool is_jimeng = is_jimeng_task(task);
-    const int32_t scale = is_claude ? 292 : is_jimeng ? 244 : 264;
-    const lv_coord_t y = is_claude ? 58 : is_jimeng ? 70 : 64;
+    const bool is_browser = is_browser_task(task);
+    const int32_t scale = is_browser ? 70 : is_claude ? 292 : is_jimeng ? 244 : 264;
+    const lv_coord_t y = is_browser ? 62 : is_claude ? 58 : is_jimeng ? 70 : 64;
     lv_image_set_scale(hero_image, scale);
     lv_obj_align(hero_image, LV_ALIGN_TOP_MID, 0, y);
 }
@@ -184,11 +192,11 @@ static void clear_hero_drag_preview() {
 }
 
 static size_t current_page_index() {
-    return selected_task_index < 3 ? selected_task_index : 0;
+    return selected_task_index < 4 ? selected_task_index : 0;
 }
 
 static bool hero_hidden_on_page(size_t index) {
-    return index < 3 ? hero_hidden_for_page[index] : false;
+    return index < 4 ? hero_hidden_for_page[index] : false;
 }
 
 static bool hero_hidden_for_current_page() {
@@ -197,7 +205,7 @@ static bool hero_hidden_for_current_page() {
 
 static void set_hero_hidden_for_current_page(bool hidden) {
     const size_t index = current_page_index();
-    if (index < 3) hero_hidden_for_page[index] = hidden;
+    if (index < 4) hero_hidden_for_page[index] = hidden;
 }
 
 static void apply_current_page_hero_visibility() {
@@ -222,7 +230,9 @@ static const lv_image_dsc_t* image_frames_for_task(const PeekDockTask* task, int
     const bool alt = frame_index % 2 == 1;
     const bool is_claude = task && std::strcmp(task->source, "claude") == 0;
     const bool is_jimeng = task && std::strcmp(task->source, "jimeng") == 0;
+    const bool is_browser = is_browser_task(task);
     if (!task) return alt ? &codex_idle_p2_b : &codex_idle_p2;
+    if (is_browser) return alt ? &browser_working_02 : &browser_working_01;
     if (is_jimeng) {
         if (std::strcmp(task->status, "completed") == 0) return alt ? &jimeng_completed_p2_b : &jimeng_completed_p2;
         if (std::strcmp(task->status, "running") == 0) return alt ? &jimeng_running_p2_b : &jimeng_running_p2;
@@ -259,6 +269,7 @@ static const char* task_type_fallback(const PeekDockTask* task) {
     if (task->task_type[0]) return task->task_type;
     if (std::strcmp(task->source, "claude") == 0) return "writing";
     if (std::strcmp(task->source, "jimeng") == 0) return "visual";
+    if (is_browser_task(task)) return "research";
     return "coding";
 }
 
@@ -266,6 +277,7 @@ static const char* agent_label_for_task(const PeekDockTask* task) {
     if (!task) return "CODEX";
     if (std::strcmp(task->source, "claude") == 0) return "CLAUDE";
     if (std::strcmp(task->source, "jimeng") == 0) return "JIMENG";
+    if (is_browser_task(task)) return "BROWSER";
     return "CODEX";
 }
 
@@ -333,6 +345,7 @@ static const char* chip_label_for_task(const PeekDockTask* task) {
     if (std::strcmp(task->status, "needs_input") == 0) return "input";
     if (std::strcmp(task->source, "jimeng") == 0) return "image";
     if (std::strcmp(task->source, "claude") == 0) return "write";
+    if (is_browser_task(task)) return "search";
     return "shell";
 }
 
@@ -418,11 +431,11 @@ static void compact_detail_text(const char* input, char* output, size_t output_s
 
 static void set_agent_dots() {
     const int active = static_cast<int>(selected_task_index);
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         lv_obj_set_size(page_dots[i], i == active ? 16 : 4, 4);
         lv_obj_set_style_bg_color(page_dots[i], lv_color_hex(0xffffff), 0);
         lv_obj_set_style_bg_opa(page_dots[i], i == active ? LV_OPA_50 : LV_OPA_10, 0);
-        lv_obj_align(page_dots[i], LV_ALIGN_BOTTOM_MID, (i - 1) * 14, -18);
+        lv_obj_align(page_dots[i], LV_ALIGN_BOTTOM_MID, i * 12 - 18, -18);
     }
 }
 
@@ -720,6 +733,17 @@ static PeekDockTask placeholder_task(size_t index) {
         task.progress = -1;
         return task;
     }
+    if (index == 3) {
+        std::snprintf(task.task_id, sizeof(task.task_id), "placeholder_browser");
+        std::snprintf(task.source, sizeof(task.source), "browser");
+        std::snprintf(task.agent_name, sizeof(task.agent_name), "Browser Agent");
+        std::snprintf(task.title, sizeof(task.title), "Research queue");
+        std::snprintf(task.task_type, sizeof(task.task_type), "research");
+        std::snprintf(task.status, sizeof(task.status), "idle");
+        std::snprintf(task.status_text, sizeof(task.status_text), "idle");
+        task.progress = -1;
+        return task;
+    }
     std::snprintf(task.task_id, sizeof(task.task_id), "placeholder_codex");
     std::snprintf(task.source, sizeof(task.source), "codex");
     std::snprintf(task.agent_name, sizeof(task.agent_name), "CodeX");
@@ -739,13 +763,14 @@ static PeekDockTask task_for_page(size_t index) {
 static size_t page_index_for_source(const char* source) {
     if (source && std::strcmp(source, "claude") == 0) return 1;
     if (source && std::strcmp(source, "jimeng") == 0) return 2;
+    if (source && (std::strcmp(source, "browser") == 0 || std::strcmp(source, "browser_agent") == 0)) return 3;
     return 0;
 }
 
 static bool upsert_task_for_source(const PeekDockTask* task) {
     if (!task || task->task_id[0] == '\0') return false;
     const size_t page_index = page_index_for_source(task->source);
-    while (task_cache_count <= page_index && task_cache_count < 3) {
+    while (task_cache_count <= page_index && task_cache_count < 4) {
         task_cache[task_cache_count] = placeholder_task(task_cache_count);
         ++task_cache_count;
     }
@@ -1015,6 +1040,17 @@ static const char* idle_copy_for_task(const PeekDockTask* task) {
             "dream ink"
         };
         return jimeng_copy[variant];
+    }
+    if (is_browser_task(task)) {
+        static const char* browser_copy[] = {
+            "tab snooze",
+            "search snack",
+            "link blanket",
+            "quiet crawl",
+            "fact nap",
+            "tiny index"
+        };
+        return browser_copy[variant];
     }
     static const char* codex_copy[] = {
         "bug blanket",
@@ -1288,7 +1324,7 @@ static void running_tick(lv_timer_t*) {
 void peekdock_screen_switch_page(int direction) {
     if (direction == 0) return;
     clear_hero_drag_preview();
-    selected_task_index = (selected_task_index + (direction > 0 ? 1 : 2)) % 3;
+    selected_task_index = (selected_task_index + (direction > 0 ? 1 : 3)) % 4;
     transition_direction = direction > 0 ? 1 : -1;
     PeekDockTask task = task_for_page(selected_task_index);
     render_task(&task);
@@ -1649,14 +1685,14 @@ void peekdock_screen_init() {
         lv_obj_add_flag(burst_particles[i], LV_OBJ_FLAG_HIDDEN);
     }
 
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         page_dots[i] = lv_obj_create(content_layer);
         lv_obj_remove_style_all(page_dots[i]);
         make_passive(page_dots[i]);
         lv_obj_set_size(page_dots[i], 4, 4);
         lv_obj_set_style_radius(page_dots[i], LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_bg_color(page_dots[i], lv_color_hex(0x30343a), 0);
-        lv_obj_align(page_dots[i], LV_ALIGN_BOTTOM_MID, (i - 1) * 14, -18);
+        lv_obj_align(page_dots[i], LV_ALIGN_BOTTOM_MID, i * 12 - 18, -18);
     }
 
     animation_timer = lv_timer_create(running_tick, 120, nullptr);
@@ -1666,7 +1702,7 @@ void peekdock_screen_init() {
     }, 24, nullptr);
     typewriter_timer = lv_timer_create(typewriter_tick, 60, nullptr);
     lv_timer_pause(typewriter_timer);
-    for (int i = 0; i < 3; ++i) hero_hidden_for_page[i] = false;
+    for (int i = 0; i < 4; ++i) hero_hidden_for_page[i] = false;
     task_cache_count = 0;
     selected_task_index = 0;
     layout_percent_group();
