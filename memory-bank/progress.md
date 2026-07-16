@@ -1,5 +1,15 @@
 # PeekDock 进度日志
 
+## 2026-07-17 Real-Agent + Hardware/Overlay Distribution Pass
+
+- 默认运行模式从 Mock 改为真实 Agent：Codex CLI/session、Claude Code CLI/project、即梦 Chrome 页面和通用 webhook 均进入统一 adapter health 与任务状态流。
+- 新增原生 AppKit 桌面悬浮小屏；无 ESP32 自动启动，有硬件则走 USB，运行中热插拔可在两种显示形态间切换。
+- `POST /api/send-task` 现在真实调用 Codex/Claude，并为即梦填入提示词、触发生成；登录或浏览器权限不足会明确进入 `needs_input`。
+- 新增 `/api/ingest` 和真实模式集成测试，Mock 仅保留为 `npm run demo`。
+- 新增 `npm run doctor`，检查 Node、Swift、Codex、Claude、Chrome/即梦与 ESP32 串口。
+- 本机已验证 Codex 真实 CLI 派发完成、session 状态读取、无硬件悬浮进程启动；Claude Code 当前未安装、即梦当前未登录标签页，因此二者的最终账号验收需要用户授权环境。
+- `npm run check`、Swift overlay build 与 6 项 Node 集成测试通过。
+
 ## 2026-07-17 PeekDock Demo MVP
 
 - 按最新产品决策删除游戏/跨设备上滑主链路，改为语音识别 + 文本 fallback + Agent 选择 + 快速发送。

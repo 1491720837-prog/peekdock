@@ -1,4 +1,4 @@
-# Hardware and Firmware
+# Hardware, Firmware, and Desktop Fallback
 
 ## Target
 
@@ -8,24 +8,17 @@
 - USB Serial/JTAG transport
 - ESP-IDF 5.x + LVGL
 
-The board configuration and vendor-derived drivers are already in `components/`, `sdkconfig.defaults`, and `src/`. The application partition is 6 MiB to hold the pixel assets.
+Board configuration and vendor-derived drivers are in `components/`, `sdkconfig.defaults`, and `src/`. The application partition is 6 MiB for pixel assets.
 
-## Build
-
-Install and activate ESP-IDF 5.x, then run from the repository root:
+## Build and flash
 
 ```bash
 idf.py set-target esp32s3
 idf.py build
-```
-
-Flash and monitor after identifying the port:
-
-```bash
 idf.py -p /dev/cu.usbmodemXXXX flash monitor
 ```
 
-Start the Mac bridge against the same port:
+Then run PeekDock. The port is normally discovered automatically; an explicit override is supported:
 
 ```bash
 PEEKDOCK_SERIAL_PORT=/dev/cu.usbmodemXXXX npm start
@@ -33,17 +26,23 @@ PEEKDOCK_SERIAL_PORT=/dev/cu.usbmodemXXXX npm start
 
 ## Firmware behavior
 
-- Four fixed pages: Codex, Claude, Jimeng and Browser Agent.
-- Horizontal swipe or left/right edge fallback changes page.
-- Agent-specific idle/running/completed frames and status color.
-- Progress, input-required action, completion burst and idle micro-copy.
+- Four pages: Codex, Claude, Jimeng, Browser Agent.
+- Horizontal swipe or edge fallback changes page.
+- Agent-specific idle/running/completed frames, status, progress and intervention UI.
 - `task_snapshot` restores all pages; `task_update` changes one task.
 - Touch actions return as newline-delimited `action_event` JSON.
 
-## Mock serial
+## Automatic display selection
 
-When the configured device is absent, the Bridge stays online and labels the transport `mock-serial`. All state transitions still reach the browser simulator and event log. This is the supported no-hardware development and judging path.
+`npm start` scans `/dev/cu.usbmodem*`, `/dev/cu.usbserial*` and `/dev/cu.wchusbserial*`.
+
+- Device present: Bridge selects `displayTarget=hardware` and streams real Agent state over USB.
+- Device absent: Bridge selects `displayTarget=desktop-overlay` and launches the native macOS floating screen.
+- Hot plug: Bridge sends a full snapshot and hides the floating screen.
+- Unplug: Bridge stays alive and restores the floating screen.
+
+This fallback is not `mock-serial`; only `npm run demo` uses Mock data.
 
 ## Verification status
 
-The runtime/API/WebSocket/simulator path is covered by automated tests. The firmware source and CMake manifest include the fourth Browser Agent page and assets. This delivery environment did not expose the target board or a complete activated ESP-IDF toolchain, so final `idf.py build`, flash, color calibration and touch validation must be performed on the physical setup. The documented mock path is not blocked by that limitation.
+Runtime, API, WebSocket, real-mode webhook, simulator and overlay compilation are covered locally. This delivery environment has no target board attached, so final `idf.py build`, flash, color calibration and touch validation must be completed with the physical device.

@@ -5,7 +5,11 @@
   "type": "module",
   "description": "PeekDock AI collaboration dock demo runtime, console, simulator, and firmware protocol.",
   "scripts": {
-    "start": "node runtime-bridge/server.mjs",
+    "start": "./scripts/start-peekdock.sh",
+    "bridge": "node runtime-bridge/server.mjs",
+    "demo": "PEEKDOCK_REAL_MONITORS=0 PEEKDOCK_DEMO_MODE=1 PEEKDOCK_OVERLAY=0 node runtime-bridge/server.mjs",
+    "overlay:build": "swiftc desktop-overlay/PeekDockOverlay.swift -o /tmp/PeekDockOverlay",
+    "doctor": "./scripts/doctor-peekdock.sh",
     "dev": "PEEKDOCK_HEADLESS=0 node --watch runtime-bridge/server.mjs",
     "check": "node --check runtime-bridge/server.mjs && node --check runtime-bridge/public/app.js",
     "test": "node --test tests/*.test.mjs"

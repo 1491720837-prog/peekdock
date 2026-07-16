@@ -78,7 +78,9 @@ const els = Object.fromEntries([
 let bridgeState = {
   currentAgent: "codex",
   tasksByAgent: Object.fromEntries(AGENTS.map((agent) => [agent, null])),
-  transport: "mock-serial",
+  transport: "desktop-overlay",
+  dataMode: "real",
+  adapterHealth: {},
   eventLog: []
 };
 let selectedAgent = "codex";
@@ -100,7 +102,14 @@ function normalizeStatus(status = "idle") {
 
 function taskFor(agent) {
   const task = bridgeState.tasksByAgent?.[agent];
-  if (task) return { ...task, status: normalizeStatus(task.status) };
+  const health = bridgeState.adapterHealth?.[agent];
+  if (task) {
+    const normalized = { ...task, status: normalizeStatus(task.status) };
+    if (normalized.status === "idle" && health && health.state !== "connected") {
+      normalized.statusText = health.detail;
+    }
+    return normalized;
+  }
   return {
     source: agent,
     agentName: AGENT_META[agent].name,
@@ -137,11 +146,13 @@ function renderAgentList() {
     const meta = AGENT_META[agent];
     const task = taskFor(agent);
     const status = normalizeStatus(task.status);
+    const health = bridgeState.adapterHealth?.[agent];
+    const healthClass = health && health.state !== "connected" ? ` adapter-${health.state}` : "";
     return `
       <button class="agent-card ${agent === selectedAgent ? "active" : ""}" data-agent="${agent}" style="--card-agent:${meta.color}">
         <img class="agent-avatar" src="${meta.art[status] || meta.art.idle}" alt="" />
         <span class="agent-copy"><b>${meta.name}</b><span>${escapeHtml(task.statusText || meta.role)}</span></span>
-        <i class="status-mini ${status}" title="${statusLabel(task)}"></i>
+        <i class="status-mini ${status}${healthClass}" title="${escapeHtml(health?.detail || statusLabel(task))}"></i>
       </button>`;
   }).join("");
   els.agentList.querySelectorAll("[data-agent]").forEach((button) => {
@@ -203,9 +214,19 @@ function render() {
   renderQueue();
   renderDock();
   renderEvents();
-  const transport = bridgeState.transport || "mock-serial";
+  const transport = bridgeState.transport || "desktop-overlay";
+  const transportLabel = transport === "usb-serial"
+    ? "USB hardware"
+    : transport === "mock-serial"
+      ? "Demo mock"
+      : "Desktop overlay";
   els.serialStatus.className = `connection-pill ${transport === "usb-serial" ? "" : "muted"}`;
-  els.serialStatus.innerHTML = `<i></i> ${transport === "usb-serial" ? "USB serial" : "Mock serial"}`;
+  els.serialStatus.innerHTML = `<i></i> ${transportLabel}`;
+  const realMode = bridgeState.dataMode !== "demo";
+  document.body.dataset.dataMode = realMode ? "real" : "demo";
+  els.scenarioSelect.hidden = realMode;
+  document.querySelector(".demo-buttons")?.classList.toggle("is-hidden", realMode);
+  document.querySelector(".quick-states")?.classList.toggle("is-hidden", realMode);
 }
 
 function notify(message) {
@@ -230,14 +251,17 @@ function applyState(nextState) {
 function handleBridgeEvent(event) {
   if (event.type === "state" && event.state) applyState(event.state);
   if (event.type === "serial_status") {
-    bridgeState.transport = event.transport || (event.connected ? "usb-serial" : "mock-serial");
+    bridgeState.transport = event.transport || (event.connected
+      ? "usb-serial"
+      : bridgeState.dataMode === "demo" ? "mock-serial" : "desktop-overlay");
     render();
   }
 }
 
 function markConnected(connected, label = "WebSocket") {
   els.bridgeStatus.className = `connection-pill ${connected ? "" : "offline"}`;
-  els.bridgeStatus.innerHTML = `<i></i> ${connected ? `${label} live` : "Bridge offline"}`;
+  const mode = bridgeState.dataMode === "demo" ? "demo" : "real agents";
+  els.bridgeStatus.innerHTML = `<i></i> ${connected ? `${label} · ${mode}` : "Bridge offline"}`;
 }
 
 function connectSseFallback() {
@@ -296,8 +320,10 @@ async function sendTask() {
   els.sendButton.disabled = true;
   els.sendButton.firstChild.textContent = "发送中 ";
   try {
-    await api("/api/send-task", { prompt, agent, scenario: els.scenarioSelect.value });
-    notify(`任务已发送给 ${AGENT_META[agent].name}`);
+    const result = await api("/api/send-task", { prompt, agent, scenario: els.scenarioSelect.value });
+    notify(result.requiresInteraction
+      ? `${AGENT_META[agent].name} 需要你在原应用完成登录、授权或确认`
+      : `真实任务已发送给 ${AGENT_META[agent].name}`);
   } catch (error) {
     notify(`发送失败：${error.message}`);
   } finally {

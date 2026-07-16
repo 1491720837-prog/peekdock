@@ -1,6 +1,14 @@
 # PeekDock 架构记录
 
-## 2026-07-17 Demo MVP 权威架构
+## 2026-07-17 Real data and dual display contract
+
+- `runtime-bridge/server.mjs` 仍是唯一权威状态源，但默认 `dataMode=real`；Mock 必须通过 `PEEKDOCK_DEMO_MODE=1` / `npm run demo` 显式开启。
+- 数据 adapter 与显示载体解耦：Codex/Claude CLI + session logs、JiMeng authenticated Chrome page、generic webhook 进入同一任务模型；ESP32 和 `desktop-overlay/PeekDockOverlay.swift` 只是两种 renderer。
+- `scripts/start-peekdock.sh` 负责首次显示选择；Bridge 每 1.5 秒继续发现串口，支持热插拔。硬件连接时 overlay 隐藏，断开时重新出现。
+- 对外状态新增 `dataMode`、`displayTarget`、`serialPort`、`realMonitorsEnabled`、`adapterHealth`，控制台和悬浮屏据此区分真实连接、等待登录、缺少客户端和错误。
+- `/api/send-task` 真实派发 Codex/Claude/即梦；`/api/ingest` 为 Browser/其他 Agent 提供本地标准化事件入口。
+
+## 2026-07-17 Demo MVP 历史架构（已被上节取代）
 
 本节覆盖下方关于桌宠、游戏和跨屏跳转的历史描述。
 
@@ -9,16 +17,16 @@
 - 当前四个固定 Agent 槽位为 `codex`、`claude`、`jimeng`、`browser`。
 - `runtime-bridge/server.mjs` 服务控制台、维护队列/状态机、广播 WebSocket/SSE，并在设备存在时写入 USB JSONL。
 - `runtime-bridge/public/` 是当前 Mac 端产品入口；历史桌宠实验不属于 MVP 验收主路径。
-- 真实本地 Agent 监听必须显式设置 `PEEKDOCK_REAL_MONITORS=1`；比赛默认使用可复现 mock adapters。
-- 无硬件是受支持配置：Bridge 显示 `mock-serial`，simulator 消费与真机相同的 canonical state。
+- 真实本地 Agent 监听现已默认开启；可复现 Mock adapters 只用于显式 `npm run demo`。
+- 无硬件是受支持配置：Bridge 显示 `desktop-overlay`，原生悬浮小屏与 simulator 消费真实 canonical state。
 - 当前协议和架构图以 `protocol/README.md`、`docs/ARCHITECTURE.md` 为准。
 
-## 2026-07-17 Demo MVP 主架构
+## 2026-07-17 Demo MVP 早期主架构（已被 Real data contract 取代）
 
 - 产品主链路已改为“语音/文本派活 → Runtime Bridge → 小屏/simulator 状态监控 → 介入或完成提醒”。游戏和旧上滑跨设备跳转均不在现行范围。
 - `runtime-bridge/public/` 是当前 Mac 控制台：语音转写、文本 fallback、四 Agent 选择、任务队列、状态流和 172×320 simulator。
-- `runtime-bridge/server.mjs` 是唯一权威状态源，默认使用确定性 mock adapters；真实 Codex/Claude/Jimeng 只读监控需要 `PEEKDOCK_REAL_MONITORS=1` 显式开启。
-- Web 客户端优先使用 `/ws` WebSocket，失败时回退 `/events` SSE。ESP32 继续使用 USB Serial JSON Lines；串口缺席时明确降级为 mock serial。
+- `runtime-bridge/server.mjs` 是唯一权威状态源，默认使用真实 adapters；确定性 Mock 需要显式 `npm run demo`。
+- Web 客户端优先使用 `/ws` WebSocket，失败时回退 `/events` SSE。ESP32 使用 USB Serial JSON Lines；串口缺席时启动 desktop overlay。
 - 固定 Agent 页从三页扩展到四页：Codex、Claude、Jimeng、Browser Agent。固件 `PeekDockEvent.tasks[4]` 与 UI task cache 保持一致。
 - `tests/bridge.test.mjs` 以独立子进程验证控制台、四 Agent、演示种子、状态流和 WebSocket。
 - 比赛截图位于 `docs/screenshots/peekdock-console.png`，演示路径见 `docs/DEMO_GUIDE.md`，完整架构见 `docs/ARCHITECTURE.md`。
@@ -33,7 +41,7 @@
 - `demo-results/`: P0 快操打开的本地 HTML 结果页，模拟 Codex/Claude/Jimeng 交付物。
 - `runtime-bridge/server.mjs`: 当前唯一的 helper/bridge 主入口。它负责 mock/真实 adapter、统一任务模型、HTTP/WebSocket/SSE、USB Serial 和小屏动作。
 - `runtime-bridge/public/`: 当前 Mac 控制台和 172×320 小屏 simulator。
-- `scripts/start-peekdock.sh`: 当前 helper 启动脚本；默认串口为 `/dev/cu.usbmodem1301`，默认 host 为 `127.0.0.1`。
+- `scripts/start-peekdock.sh`: 当前 helper 启动脚本；自动发现串口，无硬件时编译/启动 desktop overlay，默认 host 为 `127.0.0.1`。
 - `scripts/com.peekdock.bridge.plist`: 当前 LaunchAgent 模板，用来把 `runtime-bridge/server.mjs` 作为后台 helper 拉起。
 - `legacy/mac-demo-experiments/`: 旧的 Mac 端网页/桌宠实验，保留作历史参考，不再是当前主链路。
 - `protocol/`: P0 JSON Lines 协议说明和 mock fixtures。`mock-timeline.json` 驱动 helper，`demo-events.jsonl` 可直接作为串口测试数据。

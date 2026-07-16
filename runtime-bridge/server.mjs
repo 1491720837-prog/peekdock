@@ -2,18 +2,30 @@ import { createReadStream, createWriteStream, existsSync, readFileSync, readdirS
 import { createServer } from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { homedir } from "node:os";
-import { exec, execFile } from "node:child_process";
+import { exec, execFile, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 
 const rootDir = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const publicDir = join(rootDir, "runtime-bridge", "public");
-const serialPort = process.env.PEEKDOCK_SERIAL_PORT || "/dev/cu.usbmodem1301";
+const configuredSerialPort = process.env.PEEKDOCK_SERIAL_PORT || "";
+function discoverSerialPort() {
+  if (configuredSerialPort) return configuredSerialPort;
+  try {
+    const candidate = readdirSync("/dev")
+      .filter((name) => /^cu\.(usbmodem|usbserial|wchusbserial)/i.test(name))
+      .sort()[0];
+    if (candidate) return join("/dev", candidate);
+  } catch {}
+  return "/dev/cu.usbmodem1301";
+}
+let serialPort = discoverSerialPort();
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "127.0.0.1";
 const headlessMode = process.env.PEEKDOCK_HEADLESS === "1";
 const codexSessionsDir = process.env.PEEKDOCK_CODEX_SESSIONS_DIR || join(homedir(), ".codex", "sessions");
-const realMonitorsEnabled = process.env.PEEKDOCK_REAL_MONITORS === "1";
+const realMonitorsEnabled = process.env.PEEKDOCK_REAL_MONITORS !== "0";
+const demoModeEnabled = process.env.PEEKDOCK_DEMO_MODE === "1" || process.env.PEEKDOCK_REAL_MONITORS === "0";
 const codexMonitorEnabled = realMonitorsEnabled || process.env.PEEKDOCK_CODEX_MONITOR === "1";
 const claudeProjectsDir = process.env.PEEKDOCK_CLAUDE_PROJECTS_DIR || join(homedir(), ".claude", "projects");
 const claudeMonitorEnabled = realMonitorsEnabled || process.env.PEEKDOCK_CLAUDE_MONITOR === "1";
@@ -24,12 +36,12 @@ const startSoundPath = process.env.PEEKDOCK_START_SOUND || "/System/Library/Soun
 const soundsEnabled = process.env.PEEKDOCK_SOUNDS !== "0";
 const jimengUrl = process.env.PEEKDOCK_JIMENG_URL || "https://jimeng.jianying.com/";
 const preferredBrowser = process.env.PEEKDOCK_BROWSER || "chrome";
-const bridgeBuildId = "peekdock-demo-mvp-20260717";
+const bridgeBuildId = "peekdock-real-agents-20260717";
 
 const clients = new Set();
 const websocketClients = new Set();
 const state = {
-  mode: "clean",
+  mode: existsSync(serialPort) ? "clean" : "desktop",
   phase: "idle",
   currentAgent: "codex",
   agentLocation: "mac",
@@ -45,6 +57,19 @@ const state = {
   lastEvent: null,
   eventLog: []
 };
+
+const adapterHealth = {
+  codex: { state: codexMonitorEnabled ? "connecting" : "disabled", detail: codexMonitorEnabled ? "正在连接 Codex session" : "真实监听已关闭" },
+  claude: { state: claudeMonitorEnabled ? "connecting" : "disabled", detail: claudeMonitorEnabled ? "正在查找 Claude Code" : "真实监听已关闭" },
+  jimeng: { state: jimengMonitorEnabled ? "waiting" : "disabled", detail: jimengMonitorEnabled ? "请在 Chrome 打开并登录即梦" : "真实监听已关闭" },
+  browser: { state: "waiting", detail: "等待通用 Agent webhook" }
+};
+
+function setAdapterHealth(agent, nextState, detail) {
+  if (!adapterHealth[agent]) return;
+  if (adapterHealth[agent].state === nextState && adapterHealth[agent].detail === detail) return;
+  adapterHealth[agent] = { state: nextState, detail };
+}
 
 let serialWriter = null;
 let serialReader = null;
@@ -90,6 +115,7 @@ const completeToIdleTimers = {
 const mockTimersByAgent = Object.fromEntries(AGENTS.map((agent) => [agent, []]));
 const completedSoundTaskIds = new Set();
 const startedSoundTaskIds = new Set();
+const agentDispatchHoldUntil = { codex: 0, claude: 0 };
 const codexInitialTailBytes = 64 * 1024;
 const codexInitialReplayMs = 10_000;
 const codexSettleMs = 45_000;
@@ -219,7 +245,12 @@ function publicState() {
     tasksByAgent: Object.fromEntries(AGENTS.map((agent) => [agent, toPublicTask(state.tasksByAgent[agent])])),
     lastEventType: state.lastEvent?.type || null,
     agentOrder: AGENTS,
-    transport: state.serialConnected ? "usb-serial" : "mock-serial",
+    transport: state.serialConnected ? "usb-serial" : demoModeEnabled ? "mock-serial" : "desktop-overlay",
+    displayTarget: state.serialConnected ? "hardware" : "desktop-overlay",
+    serialPort,
+    dataMode: demoModeEnabled ? "demo" : "real",
+    realMonitorsEnabled,
+    adapterHealth,
     eventLog: state.eventLog.slice(-40)
   };
 }
@@ -626,6 +657,19 @@ function writeSerial(event) {
 }
 
 function openSerial() {
+  if (!configuredSerialPort && !existsSync(serialPort)) {
+    serialPort = discoverSerialPort();
+  }
+
+  if (!existsSync(serialPort)) {
+    if (serialWriter) serialWriter.destroy();
+    if (serialReader) serialReader.destroy();
+    serialWriter = null;
+    serialReader = null;
+    state.serialConnected = false;
+    return;
+  }
+
   if (!serialWriter && existsSync(serialPort)) {
     try {
       serialWriter = createWriteStream(serialPort, { flags: "a" });
@@ -653,6 +697,22 @@ function openSerial() {
   }
 
   state.serialConnected = Boolean(serialWriter || serialReader);
+}
+
+function pollSerialConnection() {
+  const wasConnected = state.serialConnected;
+  openSerial();
+  if (state.serialConnected === wasConnected) return;
+  state.mode = state.serialConnected ? "clean" : "desktop";
+  state.agentLocation = state.serialConnected ? "dock" : "mac";
+  broadcast({
+    type: "serial_status",
+    connected: state.serialConnected,
+    transport: state.serialConnected ? "usb-serial" : "desktop-overlay",
+    serialPort
+  });
+  if (state.serialConnected) syncDockSnapshot();
+  emitState();
 }
 
 function handleSerialData(chunk) {
@@ -1147,6 +1207,12 @@ function putAgentOnMac(reason = "return") {
 
 function putAgentOnDock(task = state.currentTask) {
   if (!task) return;
+  if (!state.serialConnected) {
+    state.mode = "desktop";
+    state.agentLocation = "mac";
+    emitState();
+    return;
+  }
   state.agentLocation = "dock";
   syncDockTask(task);
   emitState();
@@ -1229,6 +1295,7 @@ function ensureRealCodexTask(title = "Real Codex task") {
 }
 
 function syncRealCodexTask(status, statusText, options = {}) {
+  setAdapterHealth("codex", "connected", "Codex session 实时监听中");
   clearAgentTimers("codex");
   realCodexLastActivity = Date.now();
   const title = options.title || taskForAgent("codex")?.title || "Real Codex task";
@@ -1255,8 +1322,10 @@ function syncRealCodexTask(status, statusText, options = {}) {
 
   if (status === "idle") {
     state.agentLocation = "mac";
-  } else if (state.mode === "clean") {
+  } else if (state.mode === "clean" && state.serialConnected) {
     state.agentLocation = "dock";
+  } else {
+    state.agentLocation = "mac";
   }
 
   Object.assign(task, patch, { updated_at: new Date().toISOString() });
@@ -1312,6 +1381,7 @@ function ensureRealJimengTask(title = "JiMeng task") {
 }
 
 function syncRealClaudeTask(status, statusText, options = {}) {
+  setAdapterHealth("claude", "connected", "Claude Code session 实时监听中");
   clearAgentTimers("claude");
   realClaudeLastActivity = Date.now();
   const title = options.title || taskForAgent("claude")?.title || "Real Claude task";
@@ -1340,8 +1410,10 @@ function syncRealClaudeTask(status, statusText, options = {}) {
 
   if (status === "idle") {
     if (state.currentAgent === "claude") state.agentLocation = "mac";
-  } else if (state.mode === "clean") {
+  } else if (state.mode === "clean" && state.serialConnected) {
     state.agentLocation = "dock";
+  } else {
+    state.agentLocation = "mac";
   }
 
   Object.assign(task, patch, { updated_at: new Date().toISOString() });
@@ -1378,6 +1450,7 @@ function syncRealClaudeTask(status, statusText, options = {}) {
 }
 
 function syncRealJimengTask(status, statusText, options = {}) {
+  setAdapterHealth("jimeng", "connected", "即梦 Chrome 页面实时监听中");
   clearAgentTimers("jimeng");
   realJimengLastActivity = Date.now();
   const title = options.title || taskForAgent("jimeng")?.title || "JiMeng task";
@@ -1408,8 +1481,10 @@ function syncRealJimengTask(status, statusText, options = {}) {
 
   if (status === "idle") {
     if (state.currentAgent === "jimeng") state.agentLocation = "mac";
-  } else if (state.mode === "clean") {
+  } else if (state.mode === "clean" && state.serialConnected) {
     state.agentLocation = "dock";
+  } else {
+    state.agentLocation = "mac";
   }
 
   Object.assign(task, patch, { updated_at: new Date().toISOString() });
@@ -1601,6 +1676,12 @@ function listRolloutFiles(dir, depth = 0) {
 }
 
 function latestRolloutFile() {
+  if (codexLogPath) {
+    try {
+      const { mtimeMs } = statSync(codexLogPath);
+      if (Date.now() - mtimeMs < 2500) return codexLogPath;
+    } catch {}
+  }
   const files = listRolloutFiles(codexSessionsDir);
   let latest = "";
   let latestMtime = 0;
@@ -1643,8 +1724,14 @@ function processCodexLogBuffer(buffer, options = {}) {
 }
 
 function pollCodexSessions() {
+  if ([...launchedAgentProcesses.values()].some((entry) => entry.agent === "codex") || Date.now() < agentDispatchHoldUntil.codex) {
+    return;
+  }
   const latest = latestRolloutFile();
-  if (!latest) return;
+  if (!latest) {
+    setAdapterHealth("codex", "missing", "未找到 ~/.codex/sessions");
+    return;
+  }
 
   if (latest !== codexLogPath) {
     codexLogPath = latest;
@@ -1656,6 +1743,7 @@ function pollCodexSessions() {
         processCodexLogBuffer(readFileSync(latest).subarray(start), { sinceMs: Date.now() - codexInitialReplayMs });
       }
       console.log(`Codex session monitor attached: ${latest}`);
+      setAdapterHealth("codex", "connected", "Codex session 实时监听中");
     } catch {
       codexLogOffset = 0;
     }
@@ -1684,6 +1772,7 @@ function pollCodexSessions() {
 
 function startCodexSessionMonitor() {
   if (!codexMonitorEnabled) {
+    setAdapterHealth("codex", "disabled", "真实监听已关闭");
     console.log("Codex session monitor disabled via PEEKDOCK_CODEX_MONITOR=0");
     return;
   }
@@ -1813,7 +1902,10 @@ function processClaudeLogChunk(chunk) {
 
 function pollClaudeSessions() {
   const latest = latestClaudeLogFile();
-  if (!latest) return;
+  if (!latest) {
+    setAdapterHealth("claude", "missing", "未找到 Claude Code；安装并运行后会自动连接");
+    return;
+  }
 
   if (latest !== claudeLogPath) {
     claudeLogPath = latest;
@@ -1825,6 +1917,7 @@ function pollClaudeSessions() {
       }
       claudeLogOffset = size;
       console.log(`Claude session monitor attached: ${latest}`);
+      setAdapterHealth("claude", "connected", "Claude Code session 实时监听中");
     } catch {
       claudeLogOffset = 0;
     }
@@ -1853,6 +1946,7 @@ function pollClaudeSessions() {
 
 function startClaudeSessionMonitor() {
   if (!claudeMonitorEnabled) {
+    setAdapterHealth("claude", "disabled", "真实监听已关闭");
     console.log("Claude session monitor disabled via PEEKDOCK_CLAUDE_MONITOR=0");
     return;
   }
@@ -2111,6 +2205,76 @@ function jimengAppleScriptArgsForSnapshot(mode = "probe") {
     "-e", 'return "{\\"found\\":false}"',
     "-e", "end tell"
   ];
+}
+
+function jimengSubmitScript(prompt) {
+  const serializedPrompt = JSON.stringify(String(prompt || ""));
+  return `(() => {
+    const prompt = ${serializedPrompt};
+    const visible = (el) => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
+    const candidates = Array.from(document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"]')).filter(visible);
+    const input = candidates.find((el) => /描述|想象|创作|提示|prompt|输入/i.test(String(el.placeholder || el.getAttribute('aria-label') || ''))) || candidates[0];
+    if (!input) return JSON.stringify({ found: true, submitted: false, reason: 'prompt input not found', href: location.href });
+    input.focus();
+    if (input.isContentEditable) {
+      input.textContent = prompt;
+    } else {
+      const proto = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+      if (setter) setter.call(input, prompt); else input.value = prompt;
+    }
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: prompt }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    const buttons = Array.from(document.querySelectorAll('button, [role="button"]')).filter(visible);
+    const submit = buttons.find((el) => !el.disabled && /^(生成|发送|开始创作|立即生成|创作|生成图片)$/.test(String(el.innerText || el.getAttribute('aria-label') || '').trim())) ||
+      buttons.find((el) => !el.disabled && /生成|发送|开始创作|立即创作/i.test(String(el.innerText || el.getAttribute('aria-label') || '')));
+    if (!submit) return JSON.stringify({ found: true, submitted: false, reason: 'submit button not found', href: location.href });
+    setTimeout(() => submit.click(), 180);
+    return JSON.stringify({ found: true, submitted: true, href: location.href });
+  })()`;
+}
+
+function jimengAppleScriptArgsForSubmit(prompt) {
+  const script = appleScriptQuoted(jimengSubmitScript(prompt));
+  return [
+    "-e", 'tell application "Google Chrome"',
+    "-e", "repeat with w in windows",
+    "-e", "repeat with t in tabs of w",
+    "-e", 'if (URL of t as text) contains "jimeng" then',
+    "-e", `return execute t javascript "${script}"`,
+    "-e", "end if",
+    "-e", "end repeat",
+    "-e", "end repeat",
+    "-e", 'return "{\\"found\\":false,\\"submitted\\":false,\\"reason\\":\\"JiMeng tab not found\\"}"',
+    "-e", "end tell"
+  ];
+}
+
+function submitJimengPrompt(prompt) {
+  openAgentOnMac("jimeng");
+  return new Promise((resolve) => {
+    let attempt = 0;
+    const run = () => {
+      attempt += 1;
+      execFile("osascript", jimengAppleScriptArgsForSubmit(prompt), { timeout: 5000 }, (error, stdout = "", stderr = "") => {
+        if (error) {
+          resolve({ submitted: false, reason: String(stderr || error.message).trim(), permissionError: true });
+          return;
+        }
+        try {
+          const result = JSON.parse(String(stdout || "").trim() || "{}");
+          if (!result.submitted && result.found === false && attempt < 3) {
+            setTimeout(run, 900 * attempt);
+            return;
+          }
+          resolve(result);
+        } catch (parseError) {
+          resolve({ submitted: false, reason: parseError.message });
+        }
+      });
+    };
+    setTimeout(run, 900);
+  });
 }
 
 function runJimengSnapshot(options, callback) {
@@ -2379,12 +2543,21 @@ function pollJimengChrome() {
     jimengMonitorBusy = false;
     if (error) {
       const stderrText = String(stderr || "").trim();
+      const permissionHint = /javascript|apple events|not allowed|1743|权限/i.test(`${error.message} ${stderrText}`)
+        ? "请在 Chrome 菜单开启：查看 → 开发者 → 允许来自 Apple 事件的 JavaScript"
+        : "即梦监听失败，请确认 Chrome 已运行";
+      setAdapterHealth("jimeng", "error", permissionHint);
       console.log(`JiMeng Chrome monitor error: ${error.message}${stderrText ? ` | stderr=${stderrText}` : ""}`);
       return;
     }
 
     try {
       const snapshot = JSON.parse(String(stdout || "").trim() || "{}");
+      if (snapshot?.found === false) {
+        setAdapterHealth("jimeng", "waiting", "请在 Chrome 打开并登录即梦");
+      } else {
+        setAdapterHealth("jimeng", "connected", "即梦 Chrome 页面实时监听中");
+      }
       const previousTask = taskForAgent("jimeng");
       if (snapshot?.found === false && previousTask && previousTask.status !== "idle") {
         return;
@@ -2456,10 +2629,12 @@ function pollJimengChrome() {
 
 function startJimengMonitor() {
   if (!jimengMonitorEnabled) {
+    setAdapterHealth("jimeng", "disabled", "真实监听已关闭");
     console.log("JiMeng monitor disabled via PEEKDOCK_JIMENG_MONITOR=0");
     return;
   }
   if (normalizedBrowserName(preferredBrowser) !== "chrome") {
+    setAdapterHealth("jimeng", "error", "当前版本的即梦 adapter 需要 Google Chrome");
     console.log(`JiMeng monitor only supports Chrome for now; current browser=${preferredBrowser}`);
     return;
   }
@@ -2497,6 +2672,167 @@ function startTask(prompt, agent = "codex", scenario = "done") {
   return state.currentTask;
 }
 
+const launchedAgentProcesses = new Map();
+
+function handleCliJsonLine(agent, taskId, line, title) {
+  if (agent !== "codex" || !line.trim() || realCodexTaskId !== taskId) return;
+  try {
+    const event = JSON.parse(line);
+    const type = String(event.type || "");
+    const itemType = String(event.item?.type || "");
+    if (type === "turn.started" || type === "thread.started") {
+      syncRealCodexTask("running", type === "turn.started" ? "analyzing" : "starting", { title, progress: 12 });
+    } else if (type === "item.started" || type === "item.updated") {
+      const phase = /command|tool|mcp/i.test(itemType) ? "using tool" : "working";
+      syncRealCodexTask("running", phase, { title });
+    } else if (type === "item.completed" && /command|tool|mcp/i.test(itemType)) {
+      syncRealCodexTask("running", "reviewing output", { title });
+    } else if (type === "turn.failed" || type === "error") {
+      agentDispatchHoldUntil.codex = Date.now() + 10_000;
+      syncRealCodexTask("failed", event.error?.message || event.message || "Codex task failed", { title, progress: -1 });
+    } else if (type === "turn.completed") {
+      agentDispatchHoldUntil.codex = Date.now() + 10_000;
+      syncRealCodexTask("completed", "ready to review", { title, progress: 100 });
+    }
+  } catch {
+    // Codex may emit a partial line; the process close event remains authoritative.
+  }
+}
+
+function dispatchCliTask(agent, prompt) {
+  const title = summarizeTitleForDock(prompt, `${agentMeta[agent].agentName} task`);
+  let taskId = "";
+  let command = "";
+  let args = [];
+
+  if (agent === "codex") {
+    realCodexTaskId = `codex_real_${Date.now()}`;
+    taskId = realCodexTaskId;
+    syncRealCodexTask("running", "queued", { title, phase: "queued", focus: true, progress: 4 });
+    command = process.env.PEEKDOCK_CODEX_BIN || "codex";
+    args = ["exec", "--json", "--sandbox", "workspace-write", "-C", rootDir, prompt];
+  } else {
+    realClaudeTaskId = `claude_real_${Date.now()}`;
+    taskId = realClaudeTaskId;
+    syncRealClaudeTask("running", "queued", { title, phase: "queued", focus: true, progress: 4 });
+    command = process.env.PEEKDOCK_CLAUDE_BIN || "claude";
+    args = ["-p", prompt];
+  }
+
+  const child = spawn(command, args, {
+    cwd: rootDir,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  launchedAgentProcesses.set(taskId, { child, agent });
+  let stderrTail = "";
+  let stdoutBuffer = "";
+  child.stdout?.on("data", (chunk) => {
+    stdoutBuffer += String(chunk);
+    let newline = stdoutBuffer.indexOf("\n");
+    while (newline >= 0) {
+      handleCliJsonLine(agent, taskId, stdoutBuffer.slice(0, newline), title);
+      stdoutBuffer = stdoutBuffer.slice(newline + 1);
+      newline = stdoutBuffer.indexOf("\n");
+    }
+  });
+  child.stderr?.on("data", (chunk) => {
+    stderrTail = `${stderrTail}${chunk}`.slice(-600);
+  });
+  child.on("error", (error) => {
+    launchedAgentProcesses.delete(taskId);
+    const detail = `${agentMeta[agent].agentName} CLI 不可用：${error.message}`;
+    if (agent === "codex") syncRealCodexTask("failed", detail, { title, progress: -1 });
+    else syncRealClaudeTask("failed", detail, { title, progress: -1 });
+    setAdapterHealth(agent, "missing", detail);
+    emitState();
+  });
+  child.on("close", (code) => {
+    launchedAgentProcesses.delete(taskId);
+    agentDispatchHoldUntil[agent] = Date.now() + 10_000;
+    const task = taskForAgent(agent);
+    if (!task || task.task_id !== taskId || ["completed", "failed", "needs_input"].includes(task.status)) return;
+    if (code === 0) {
+      if (agent === "codex") syncRealCodexTask("completed", "ready to review", { title, progress: 100 });
+      else syncRealClaudeTask("completed", "ready to review", { title, progress: 100 });
+    } else {
+      const detail = stderrTail.trim().split("\n").slice(-1)[0] || `${agentMeta[agent].agentName} exited with ${code}`;
+      if (agent === "codex") syncRealCodexTask("failed", detail, { title, progress: -1 });
+      else syncRealClaudeTask("failed", detail, { title, progress: -1 });
+    }
+  });
+
+  return { task: taskForAgent(agent), dispatchMode: "cli", pid: child.pid };
+}
+
+async function dispatchRealTask(prompt, agent = "codex") {
+  const normalizedAgent = AGENTS.includes(agent) ? agent : "codex";
+  state.lastPrompt = prompt;
+  if (normalizedAgent === "codex" || normalizedAgent === "claude") {
+    return dispatchCliTask(normalizedAgent, prompt);
+  }
+  noteManualAgentSelection(normalizedAgent);
+  setCurrentAgent(normalizedAgent);
+  state.mode = state.serialConnected ? "clean" : "desktop";
+  state.agentLocation = state.serialConnected ? "dock" : "mac";
+  if (normalizedAgent === "jimeng") {
+    realJimengTaskId = `jimeng_real_${Date.now()}`;
+    syncRealJimengTask("running", "正在打开即梦并发送任务", { title: summarizeTitleForDock(prompt, "JiMeng task"), focus: true, progress: 4 });
+    const result = await submitJimengPrompt(prompt);
+    if (result.submitted) {
+      setAdapterHealth("jimeng", "connected", "任务已发送，即梦页面状态实时监听中");
+      syncRealJimengTask("running", "已发送，等待即梦生成", { title: summarizeTitleForDock(prompt, "JiMeng task"), focus: true, progress: 8 });
+      return { task: taskForAgent("jimeng"), dispatchMode: "jimeng-page", requiresInteraction: false };
+    }
+    const permissionHint = result.permissionError
+      ? "请开启 Chrome：查看 → 开发者 → 允许来自 Apple 事件的 JavaScript"
+      : `请登录即梦并确认输入框：${result.reason || "页面尚未就绪"}`;
+    syncRealJimengTask("needs_input", permissionHint, { title: summarizeTitleForDock(prompt, "JiMeng task"), focus: true, progress: -1 });
+    setAdapterHealth("jimeng", result.permissionError ? "error" : "waiting", permissionHint);
+    emitState();
+    return { task: taskForAgent("jimeng"), dispatchMode: "jimeng-page", requiresInteraction: true };
+  }
+  setAdapterHealth("browser", "waiting", "已打开浏览器；可通过 /api/ingest 接入真实 Agent 事件");
+  openAgentOnMac("browser");
+  emitState();
+  return { task: taskForAgent("browser"), dispatchMode: "open-app", requiresInteraction: true };
+}
+
+function ingestExternalTask(agent, payload = {}) {
+  const status = ["idle", "running", "needs_input", "completed", "failed"].includes(payload.status)
+    ? payload.status
+    : "running";
+  const title = summarizeTitleForDock(payload.title || `${agentMeta[agent].agentName} task`, agentMeta[agent].agentName);
+  const options = {
+    title,
+    phase: payload.phase || payload.statusText || status,
+    progress: typeof payload.progress === "number" ? payload.progress : -1,
+    resultUri: typeof payload.resultUri === "string" ? payload.resultUri : "",
+    focus: payload.focus !== false
+  };
+  if (agent === "codex") return syncRealCodexTask(status, payload.statusText || status, options);
+  if (agent === "claude") return syncRealClaudeTask(status, payload.statusText || status, options);
+  if (agent === "jimeng") return syncRealJimengTask(status, payload.statusText || status, options);
+
+  setAdapterHealth("browser", "connected", "通用 Agent webhook 已连接");
+  const previous = taskForAgent("browser");
+  const task = {
+    ...(previous || baseTaskForAgent("browser", title)),
+    task_id: payload.taskId || (previous?.task_id.startsWith("browser_external_") ? previous.task_id : `browser_external_${Date.now()}`),
+    title,
+    status,
+    status_text: payload.statusText || status,
+    progress: status === "completed" ? 100 : options.progress,
+    result_uri: options.resultUri,
+    updated_at: new Date().toISOString(),
+    animation_key: animationKeyFor("browser", status)
+  };
+  setTaskForAgent("browser", task);
+  if (options.focus) setCurrentAgent("browser");
+  if (state.serialConnected) syncDockSnapshot();
+  emitState();
+  return task;
+}
+
 function idleTaskForAgent(agent) {
   const meta = agentMeta[agent];
   return {
@@ -2527,7 +2863,8 @@ function resetDemoState() {
   }
   setCurrentAgent("codex");
   state.phase = "idle";
-  state.agentLocation = "dock";
+  state.mode = state.serialConnected ? "clean" : "desktop";
+  state.agentLocation = state.serialConnected ? "dock" : "mac";
   state.lastPrompt = "";
   syncDockSnapshot();
   emitState();
@@ -2606,7 +2943,11 @@ const server = createServer(async (req, res) => {
     });
     clients.add(res);
     sendSse(res, { type: "state", state: publicState() });
-    sendSse(res, { type: "serial_status", connected: state.serialConnected });
+    sendSse(res, {
+      type: "serial_status",
+      connected: state.serialConnected,
+      transport: state.serialConnected ? "usb-serial" : "desktop-overlay"
+    });
     req.on("close", () => clients.delete(res));
     return;
   }
@@ -2619,8 +2960,29 @@ const server = createServer(async (req, res) => {
       const agent = String(body.agent || "codex");
       const scenario = ["done", "input_required", "error"].includes(body.scenario) ? body.scenario : "done";
       if (!AGENTS.includes(agent)) return sendJson(res, 400, { ok: false, error: "Unknown agent" });
-      const task = startTask(prompt, agent, scenario);
-      return sendJson(res, 200, { ok: true, serialConnected: state.serialConnected, taskId: task.task_id, state: publicState() });
+      const dispatched = demoModeEnabled
+        ? { task: startTask(prompt, agent, scenario), dispatchMode: "demo" }
+        : await dispatchRealTask(prompt, agent);
+      return sendJson(res, 200, {
+        ok: true,
+        serialConnected: state.serialConnected,
+        taskId: dispatched.task?.task_id || "",
+        dispatchMode: dispatched.dispatchMode,
+        requiresInteraction: Boolean(dispatched.requiresInteraction),
+        state: publicState()
+      });
+    } catch (error) {
+      return sendJson(res, 400, { ok: false, error: error.message });
+    }
+  }
+
+  if (url.pathname === "/api/ingest" && req.method === "POST") {
+    try {
+      const body = await readBody(req);
+      const agent = String(body.agent || body.source || "browser");
+      if (!AGENTS.includes(agent)) return sendJson(res, 400, { ok: false, error: "Unknown agent" });
+      ingestExternalTask(agent, body);
+      return sendJson(res, 200, { ok: true, state: publicState() });
     } catch (error) {
       return sendJson(res, 400, { ok: false, error: error.message });
     }
@@ -2810,13 +3172,18 @@ server.on("upgrade", (req, socket, head) => {
 websocketServer.on("connection", (client) => {
   websocketClients.add(client);
   client.send(JSON.stringify({ type: "state", state: publicState() }));
-  client.send(JSON.stringify({ type: "serial_status", connected: state.serialConnected, transport: state.serialConnected ? "usb-serial" : "mock-serial" }));
+  client.send(JSON.stringify({
+    type: "serial_status",
+    connected: state.serialConnected,
+    transport: state.serialConnected ? "usb-serial" : "desktop-overlay"
+  }));
   client.on("close", () => websocketClients.delete(client));
   client.on("error", () => websocketClients.delete(client));
 });
 
 function startRuntimeMonitors(serialMissingText = " (not present)") {
   openSerial();
+  setInterval(pollSerialConnection, 1500);
   startCodexSessionMonitor();
   startClaudeSessionMonitor();
   startJimengMonitor();

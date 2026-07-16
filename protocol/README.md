@@ -1,6 +1,6 @@
 # PeekDock Protocol
 
-Runtime Bridge 是任务状态权威源。Mac 控制台通过 HTTP + WebSocket/SSE 消费状态；物理 PeekDock 通过 USB Serial/JTAG 上的 JSON Lines 消费同一事件。无串口时 Bridge 使用 mock serial，API 行为不变。
+Runtime Bridge 是任务状态权威源。Mac 控制台通过 HTTP + WebSocket/SSE 消费状态；物理 PeekDock 通过 USB Serial/JTAG 上的 JSON Lines 消费同一事件。无串口时由 macOS 桌面悬浮小屏消费同一份真实状态；只有显式 `npm run demo` 才使用 Mock 数据。
 
 ## 传输
 

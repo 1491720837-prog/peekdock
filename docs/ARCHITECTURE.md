@@ -1,31 +1,37 @@
-# PeekDock MVP Architecture
+# PeekDock Runtime Architecture
 
 ## Design goals
 
-PeekDock turns heterogeneous Agent events into a small, dependable state model. The demo must remain useful without a board or cloud credentials, while the same events can be forwarded to the physical display when present.
+PeekDock normalizes real AI activity into a glanceable five-state model and keeps data acquisition independent from the display. A physical board and the desktop floating screen are two render targets for the same state; absence of hardware must never imply fake Agent data.
 
 ## Components
 
 ### Mac console
 
-`runtime-bridge/public/` is a dependency-free web app served by the bridge. It owns voice capture/transcription UI, text fallback, Agent and scenario selection, the task queue, event log, toast notifications, and a 172 × 320 simulator. It receives a full state immediately, then incremental state over WebSocket; SSE is the fallback.
+`runtime-bridge/public/` provides voice/transcription UI, text fallback, Agent selection, adapter diagnostics, task queue, event log and a 172 × 320 browser simulator. WebSocket is primary; SSE is the fallback.
 
 ### Runtime Bridge
 
 `runtime-bridge/server.mjs` is the canonical state owner. It:
 
-- keeps one visible task slot for each of `codex`, `claude`, `jimeng`, and `browser`;
-- exposes local HTTP actions and broadcasts state through WebSocket/SSE;
-- runs deterministic mock timelines for the competition demo;
-- can opt in to read-only Codex, Claude, and Jimeng monitoring;
-- writes the same normalized JSON events to a USB serial device when it exists;
-- treats a missing serial device as mock mode rather than an error.
+- keeps one task slot for `codex`, `claude`, `jimeng` and `browser`;
+- dispatches Codex through `codex exec --json` and Claude through `claude -p`;
+- tails Codex and Claude session JSONL for work started outside PeekDock;
+- submits prompts to an authenticated JiMeng Chrome page and polls its real page/API state;
+- accepts normalized events from other Agent runtimes through `POST /api/ingest`;
+- broadcasts HTTP, WebSocket and SSE state;
+- discovers USB serial devices and reconnects without restarting;
+- exposes `dataMode`, `displayTarget`, serial path and per-adapter health.
 
-The bridge binds to `127.0.0.1` by default. Local file opens are restricted to repository demo results and known application actions.
+Real mode is default. `PEEKDOCK_REAL_MONITORS=0 PEEKDOCK_DEMO_MODE=1` explicitly enables deterministic Mock timelines for offline demos/tests.
+
+### Desktop overlay
+
+`desktop-overlay/PeekDockOverlay.swift` is the no-hardware display. It is an always-on-top AppKit panel, polls `/api/state`, renders the same four character assets, and switches Agent on left/right click. When hardware connects it hides; when hardware disconnects it reappears.
 
 ### ESP32 firmware
 
-The active firmware path is ESP-IDF + LVGL under `src/`. It parses newline-delimited events into `PeekDockTask`, stores four fixed Agent pages, and renders agent-specific pixel frames. The Mac remains the authority for task and desktop actions; firmware only renders state and emits whitelisted `action_event` messages.
+The ESP-IDF + LVGL firmware under `src/` parses JSON Lines into `PeekDockTask`, stores four Agent pages, renders pixel frames and emits whitelisted `action_event` messages. The Mac remains authoritative for tasks and desktop actions.
 
 ## Unified task model
 
@@ -34,32 +40,31 @@ task_id, source, agent_name, title, task_type,
 status, status_text, progress, result_uri, updated_at
 ```
 
-The public API uses camelCase while USB fixtures use snake_case. Status normalization is:
-
 | Canonical | UI | Meaning |
 | --- | --- | --- |
 | `idle` | Idle | No current work |
 | `running` | Working | Agent is processing |
-| `needs_input` | Input required | Human decision or missing detail |
+| `needs_input` | Input required | Login, permission or human decision required |
 | `completed` | Done | Result is ready |
 | `failed` | Error | Retry or investigation required |
 
-## Data flow
+Unknown progress is `-1`; renderers do not invent a precise percentage.
 
-1. Voice recognition or text produces a prompt in the console.
-2. `POST /api/send-task` creates a task and starts the selected mock adapter.
-3. Every transition updates canonical state, broadcasts it, and writes `task_update` / `task_snapshot` to serial when available.
-4. Browser simulator and ESP32 independently render the same model.
-5. `completed` triggers a visible and audible completion cue; `needs_input` surfaces a review action.
+## Real data flow
 
-## Reliability choices
+1. Voice recognition or text produces a prompt.
+2. `POST /api/send-task` invokes the selected real adapter.
+3. CLI JSON/session JSONL, JiMeng page state or webhook events update canonical state.
+4. Bridge broadcasts the update and, when present, writes `task_update` / `task_snapshot` to serial.
+5. The active render target is ESP32 hardware or the desktop overlay; the browser simulator remains available for inspection.
+6. `completed` triggers visible/audible feedback; authorization or login gaps become `needs_input`.
 
-- Mock adapters are default-off from real local sessions, making a competition run repeatable.
-- Full snapshots are sent on connection/reset so consumers recover without replaying history.
-- WebSocket is primary and SSE is a browser fallback.
-- Serial absence is a visible transport state, not a startup failure.
-- Voice is progressive enhancement; typed text is always available.
+## Reliability and boundaries
 
-## Security and scope
-
-The MVP is a localhost application and has no user account or remote exposure. It does not send prompts to third-party AI services by default. A production version needs authenticated adapters, permission-scoped actions, encrypted wireless transport, and a persistent event store.
+- Full snapshots recover reconnecting consumers.
+- Serial discovery polls for hot plug/unplug.
+- CLI dispatch output is consumed directly while session monitors also detect work started elsewhere.
+- A short dispatch hold prevents a second active Codex session from immediately overwriting a completion notice.
+- Adapter health distinguishes `connected`, `waiting`, `missing`, `error` and `disabled`.
+- Bridge binds to `127.0.0.1` by default; `/api/ingest` is therefore local-only unless the operator deliberately changes the host.
+- Account login, CAPTCHA and OS/browser permissions remain human-controlled.

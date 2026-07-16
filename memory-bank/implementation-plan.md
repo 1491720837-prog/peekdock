@@ -1,5 +1,7 @@
 # PeekDock 实施计划
 
+> **2026-07-17 状态：以下是已完成的历史 P0 分步计划。当前版本已升级为真实 Agent 默认、ESP32/桌面悬浮屏自动选择；现行启动和验收以 `README.md`、`docs/ARCHITECTURE.md` 和 `memory-bank/progress.md` 为准。**
+
 原则：每一步都要小、具体、可验证；验证通过前不进入下一步。黑客松 P0 的目标不是“做完所有底层驱动”，而是跑通一个可信的跨屏任务舱 demo：Mac 闲置态 -> 发起 mock AI 任务 -> 小屏工作态 -> 多 Agent 查看 -> 完成/异常提示 -> 小屏召回 Mac。
 
 ## Step 1: 锁定 P0 Demo 契约
@@ -220,4 +222,3 @@
 每完成一个经过用户验证的里程碑后，更新 `progress.md` 和 `architecture.md`。不要把设计决策散落在聊天记录里。
 
 验证：另一个 agent 只读 `PROJECT_CONTEXT.md`、`PRD.md` 和 `memory-bank/`，能理解当前进度、文件职责、下一步动作和未决风险。
-

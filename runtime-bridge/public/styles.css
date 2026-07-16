@@ -108,6 +108,9 @@ button { color: inherit; }
 .status-mini.completed { background: var(--yellow); }
 .status-mini.needs_input { background: var(--blue); box-shadow: 0 0 8px var(--blue); }
 .status-mini.failed { background: var(--red); }
+.status-mini.adapter-missing, .status-mini.adapter-disabled { background: #59606a; box-shadow: none; animation: none; }
+.status-mini.adapter-waiting { background: #d7a84d; box-shadow: 0 0 7px rgba(215,168,77,.45); animation: none; }
+.status-mini.adapter-error { background: var(--red); box-shadow: 0 0 7px rgba(255,90,90,.45); animation: none; }
 .rail-note { margin-top: 18px; padding: 15px 12px 5px; border-top: 1px solid var(--line); }
 .rail-note span { font: 600 8px monospace; color: #6e7580; letter-spacing: .14em; }
 .rail-note p { color: #6f7580; font: 10px/1.6 monospace; margin: 7px 0; }
@@ -199,6 +202,7 @@ textarea::placeholder { color: #575d67; }
 .sim-controls button { width: 28px; height: 26px; border: 1px solid var(--line); border-radius: 8px; background: #101319; color: #a5abb4; cursor: pointer; }
 .quick-states { display: flex; justify-content: center; gap: 6px; margin-top: 10px; }
 .quick-states button:hover { border-color: var(--line-bright); color: #d8dbe0; }
+.is-hidden { display: none !important; }
 
 .event-panel { padding: 13px 14px; }
 .event-title { display: flex; justify-content: space-between; color: #777f89; font: 9px monospace; text-transform: uppercase; letter-spacing: .07em; }
