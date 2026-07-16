@@ -6,8 +6,7 @@
 
 
 
-> 当前版本是比赛 Demo MVP。没有 ESP32 实物也能用浏览器 simulator 完整演示；接入 Waveshare ESP32-S3-Touch-LCD-1.47 后，同一份任务状态会通过 USB Serial/JSON Lines 下发到 LVGL 固件。
-
+> 当前版本是比赛 Demo MVP，使用串口通信。
 ## 为什么做 PeekDock
 
 Codex、Claude、即梦和 Browser Agent 可以同时工作，但它们的运行、等待确认、失败和完成散落在不同窗口。人必须反复切屏巡检，既打断主任务，也容易漏掉卡点。
