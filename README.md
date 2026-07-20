@@ -28,7 +28,7 @@ PeekDock 把这种“等待管理”从主屏剥离出来：主屏继续创作�
 - **四个 Agent 角色**：Codex、Claude、Jimeng、Browser Agent，统一为 `idle / running / needs_input / completed / failed`。
 - **语音发送**：控制台通过 Web Speech API 转写；不支持或未授权时可直接输入文本。
 - **实时控制台**：任务队列、适配器健康状态、WebSocket/SSE 事件流、设备状态和 172×320 simulator。
-- **完成提醒**：显示“老板，我做好啦”、角色完成态、声音提醒与 100% 进度。
+- **完成提醒**：角色完成态、声音提醒与 100% 进度。
 - **ESP32/LVGL**：四页 Agent 缓存、横向切换、状态动画、USB Serial JSON Lines 与断线快照恢复。
 
 Mock 只保留给离线演示和自动化测试，不是默认运行模式。本版本已砍掉游戏；旧“上滑跨设备游戏/跳转”已由语音或文本派发任务替代。
