@@ -162,6 +162,8 @@ idf.py -p /dev/cu.usbmodem1301 flash monitor
 PEEKDOCK_SERIAL_PORT=/dev/cu.usbmodem1301 npm start
 ```
 
+无硬件时会启动兜底桌面悬浮屏方案来模拟硬件。
+
 ## 与常见方案的区别
 
 | 方案 | 主要用途 | PeekDock 的区别 |
