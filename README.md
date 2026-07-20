@@ -13,8 +13,7 @@
 <img width="1620" height="1080" alt="PeekDock Demo 实机画面一" src="https://github.com/user-attachments/assets/bc285352-b1a0-489b-a42c-94c4fe4d564c" />
 <img width="1620" height="1080" alt="PeekDock Demo 实机画面二" src="https://github.com/user-attachments/assets/68b7b8b5-98d8-48a1-a512-fbd385e3032d" />
 
-> 图片为实体串口版本。没有设备时，项目会自动启动同样角色与状态模型的桌面悬浮小屏。
-
+> 图片为路演实体串口mvp版本
 ## 为什么做 PeekDock
 
 Codex、Claude、即梦和 Browser Agent 可以同时工作，但运行、等待确认、失败和完成散落在不同窗口。人必须反复切屏巡检，既打断主任务，也容易漏掉卡点。
