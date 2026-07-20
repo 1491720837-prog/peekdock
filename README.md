@@ -106,7 +106,7 @@ curl -X POST http://127.0.0.1:4173/api/ingest \
 2. 运行 `npm start`；无硬件时观察桌面右上角悬浮小屏，有硬件时观察实体屏。
 3. 打开控制台，选择 Codex，语音说出任务或输入文字并发送。
 4. 观察 Codex 从 `Working` 进入真实工具阶段，并最终变为 `Done` 或 `Input required`。
-5. 完成时展示“老板，我做好啦”。
+5. 完成时展示完成态。
 6. 点击悬浮屏左/右半边、控制台 Agent 卡片或实体屏手势，切换 Claude、Jimeng、Browser Agent。
 
 现场演示建议与降级方案见 [Demo 指南](docs/DEMO_GUIDE.md)。
