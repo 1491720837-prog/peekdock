@@ -137,7 +137,7 @@ Runtime Bridge 是唯一权威状态源。硬件、悬浮窗、网页 simulator 
 - `GET /events`：SSE；`WS /ws`：实时状态与事件。
 - `/api/demo/*` 与 `scenario`：仅供显式 `npm run demo` 使用。
 
-## 硬件与无硬件模式
+## 硬件
 
 目标硬件为 Waveshare ESP32-S3-Touch-LCD-1.47（ESP32-S3R8、16MB Flash、8MB PSRAM、JD9853 172×320、AXS5106L 触摸）。
 
@@ -149,8 +149,6 @@ idf.py build
 idf.py -p /dev/cu.usbmodem1301 flash monitor
 PEEKDOCK_SERIAL_PORT=/dev/cu.usbmodem1301 npm start
 ```
-
-没有硬件时无需改配置，直接 `npm start`。原生悬浮屏会一直置顶、跨桌面显示、支持拖动，点击左/右半边切换角色，右键打开控制台。设备后续插入时 Bridge 自动同步 `task_snapshot`，悬浮屏隐藏；拔出后悬浮屏重新出现。
 
 ## 与常见方案的区别
 
@@ -165,8 +163,6 @@ PEEKDOCK_SERIAL_PORT=/dev/cu.usbmodem1301 npm start
 
 **为什么不是手机或手表？** 通用通知会和生活信息竞争；PeekDock 是常驻视线边缘、单一目的的 AI 状态环境显示，不抢占主屏。
 
-**为什么不是副屏？** 副屏只是增加像素，仍要求人理解不同工具界面；PeekDock 先把不同 AI 归一成五种状态，再用角色和动作降低识别成本。
-
 **为什么不是 Stream Deck？** Stream Deck 以“人按键触发”为中心；PeekDock 以“Agent 异步工作、设备主动汇报”为中心。
 
 **AI 数据如何接入？** 当前使用真实 CLI 事件、本地 session JSONL、已登录网页状态与通用 webhook，统一输出 PeekDock Task Schema。Mock 只在显式 Demo 模式启用。
@@ -174,10 +170,6 @@ PEEKDOCK_SERIAL_PORT=/dev/cu.usbmodem1301 npm start
 **通信协议是什么？** Mac 内部使用 HTTP + WebSocket/SSE；Mac 与 ESP32 使用 USB Serial/JTAG 上的 JSON Lines。`task_snapshot` 全量恢复，`task_update` 增量更新，`action_event` 把设备输入交回 Mac。
 
 **支持多少 Agent？** 当前 UI 固定四个角色；协议和 webhook 可扩展。实体 172×320 屏以 4–8 个高频 Agent 最合适，更多任务由控制台筛选。
-
-**最终产品形态是什么？** 1–2 英寸低功耗屏、麦克风/触摸或旋钮的桌面硬件，配套 Mac/Windows Runtime；也可作为 OEM 模组进入键盘、显示器底座或桌面终端。
-
-**厂商自研硬件后还有什么优势？** 核心不只是屏幕，而是跨工具任务状态标准、适配器生态、角色资产和低打扰提醒体验；新硬件反而可以成为 Runtime 的新载体。
 
 ## 测试
 
