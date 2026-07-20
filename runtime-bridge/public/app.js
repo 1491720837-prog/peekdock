@@ -68,8 +68,7 @@ const STATUS_COPY = {
 };
 
 const els = Object.fromEntries([
-  "agentList", "activeCount", "queueList", "agentSelect", "scenarioSelect", "promptInput",
-  "voiceButton", "voiceState", "sendButton", "bridgeStatus", "serialStatus", "dockScreen",
+  "agentList", "activeCount", "queueList", "bridgeStatus", "serialStatus", "dockScreen",
   "dockAgentName", "dockSignal", "dockAgentArt", "dockPrimary", "dockTaskTitle", "dockAlert",
   "dockProgress", "dockProgressFill", "dockProgressLabel", "pageDots", "prevAgent", "nextAgent",
   "eventLog", "eventCount", "toast"
@@ -86,8 +85,6 @@ let bridgeState = {
 let selectedAgent = "codex";
 let socket = null;
 let eventSource = null;
-let recognition = null;
-let listening = false;
 let lastStatuses = {};
 let toastTimer = null;
 let swipeStartX = 0;
@@ -134,7 +131,6 @@ function statusLabel(task) {
 function setSelectedAgent(agent, { sync = true } = {}) {
   if (!AGENTS.includes(agent)) return;
   selectedAgent = agent;
-  els.agentSelect.value = agent;
   render();
   if (sync) api("/api/switch-agent", { agent }).catch(() => {});
 }
@@ -224,7 +220,6 @@ function render() {
   els.serialStatus.innerHTML = `<i></i> ${transportLabel}`;
   const realMode = bridgeState.dataMode !== "demo";
   document.body.dataset.dataMode = realMode ? "real" : "demo";
-  els.scenarioSelect.hidden = realMode;
   document.querySelector(".demo-buttons")?.classList.toggle("is-hidden", realMode);
   document.querySelector(".quick-states")?.classList.toggle("is-hidden", realMode);
 }
@@ -308,91 +303,11 @@ async function api(path, body = {}) {
   return data;
 }
 
-async function sendTask() {
-  const prompt = els.promptInput.value.trim();
-  if (!prompt) {
-    els.promptInput.focus();
-    notify("先说点什么，或输入一条任务");
-    return;
-  }
-  const agent = els.agentSelect.value;
-  setSelectedAgent(agent, { sync: false });
-  els.sendButton.disabled = true;
-  els.sendButton.firstChild.textContent = "发送中 ";
-  try {
-    const result = await api("/api/send-task", { prompt, agent, scenario: els.scenarioSelect.value });
-    notify(result.requiresInteraction
-      ? `${AGENT_META[agent].name} 需要你在原应用完成登录、授权或确认`
-      : `真实任务已发送给 ${AGENT_META[agent].name}`);
-  } catch (error) {
-    notify(`发送失败：${error.message}`);
-  } finally {
-    els.sendButton.disabled = false;
-    els.sendButton.firstChild.textContent = "发送任务 ";
-  }
-}
-
-function finishVoiceUi(message = "转写完成，可继续编辑后发送") {
-  listening = false;
-  document.querySelector(".composer")?.classList.remove("recording");
-  els.voiceButton.classList.remove("recording");
-  els.voiceButton.setAttribute("aria-pressed", "false");
-  els.voiceButton.querySelector("b").textContent = "按下说话";
-  els.voiceState.textContent = message;
-}
-
-function setupVoice() {
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Recognition) {
-    els.voiceState.textContent = "当前浏览器不支持语音转写，请使用文字输入";
-    els.voiceButton.addEventListener("click", () => notify("建议使用 Chrome 打开，以启用浏览器语音转写"));
-    return;
-  }
-  recognition = new Recognition();
-  recognition.lang = "zh-CN";
-  recognition.continuous = false;
-  recognition.interimResults = true;
-  let finalTranscript = "";
-  recognition.onstart = () => {
-    listening = true;
-    finalTranscript = "";
-    document.querySelector(".composer")?.classList.add("recording");
-    els.voiceButton.classList.add("recording");
-    els.voiceButton.setAttribute("aria-pressed", "true");
-    els.voiceButton.querySelector("b").textContent = "正在听…";
-    els.voiceState.textContent = "录音中 · 再点一次结束";
-  };
-  recognition.onresult = (event) => {
-    let interim = "";
-    for (let index = event.resultIndex; index < event.results.length; index += 1) {
-      const text = event.results[index][0].transcript;
-      if (event.results[index].isFinal) finalTranscript += text;
-      else interim += text;
-    }
-    const transcript = (finalTranscript || interim).trim();
-    if (transcript) els.promptInput.value = transcript.slice(0, 140);
-    els.voiceState.textContent = interim ? `正在转写：${interim}` : "转写完成，可继续编辑后发送";
-  };
-  recognition.onerror = (event) => finishVoiceUi(event.error === "not-allowed" ? "麦克风权限未开启，请使用文字输入" : "语音识别未完成，请重试或使用文字输入");
-  recognition.onend = () => finishVoiceUi();
-  els.voiceButton.addEventListener("click", () => {
-    if (listening) recognition.stop();
-    else {
-      els.voiceState.textContent = "正在请求麦克风…";
-      try { recognition.start(); } catch { finishVoiceUi("语音服务正忙，请稍后重试"); }
-    }
-  });
-}
-
 function cycleAgent(direction) {
   const current = AGENTS.indexOf(selectedAgent);
   setSelectedAgent(AGENTS[(current + direction + AGENTS.length) % AGENTS.length]);
 }
 
-els.sendButton.addEventListener("click", sendTask);
-els.promptInput.addEventListener("keydown", (event) => {
-  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") sendTask();
-});
 els.prevAgent.addEventListener("click", () => cycleAgent(-1));
 els.nextAgent.addEventListener("click", () => cycleAgent(1));
 els.dockScreen.addEventListener("pointerdown", (event) => { swipeStartX = event.clientX; });
@@ -419,7 +334,6 @@ document.querySelectorAll("[data-status]").forEach((button) => {
   });
 });
 
-setupVoice();
 render();
 connectBridge();
 fetch("/api/state").then((response) => response.json()).then((data) => data.state && applyState(data.state)).catch(() => {});

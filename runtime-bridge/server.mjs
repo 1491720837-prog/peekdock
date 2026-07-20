@@ -359,6 +359,7 @@ function normalizePhaseText(status, phase = "", fallback = "") {
   if (status === "failed") return fallback || "error";
   if (status === "idle") return "idle";
   if (status === "needs_input") {
+    if (/accessibility|辅助功能|辅助访问/i.test(phase || fallback)) return "enable Accessibility";
     return "review";
   }
   if (/reconnect|connection|disconnected|network/i.test(phase || fallback)) return "reconnecting";
@@ -389,18 +390,23 @@ function codexInterventionPhase(payload = {}) {
   const payloadType = String(payload.type || "").toLowerCase();
   if (/approval|confirmation|confirm_required|user_input|needs_input/.test(payloadType)) return "probe_review_ui";
 
-  const name = String(payload.name || "");
-  const args = typeof payload.arguments === "string" ? payload.arguments : textFromPayload(payload);
+  const name = String(payload.name || "").toLowerCase();
+  const args = typeof payload.arguments === "string"
+    ? payload.arguments
+    : typeof payload.input === "string" ? payload.input : textFromPayload(payload);
   const parsed = parseToolArguments(args);
   const permissionValue = String(parsed.sandbox_permissions || parsed.permission || parsed.approval || "").toLowerCase();
+  const rawArguments = String(args || "").toLowerCase();
   const explicitEscalation = permissionValue === "require_escalated" ||
     parsed.with_escalated_permissions === true ||
     parsed.requires_approval === true ||
     parsed.needs_approval === true ||
-    (typeof parsed.justification === "string" && parsed.justification.trim());
+    (typeof parsed.justification === "string" && parsed.justification.trim()) ||
+    /sandbox_permissions["']?\s*:\s*["']require_escalated["']/.test(rawArguments) ||
+    /requires_approval["']?\s*:\s*true/.test(rawArguments);
   if (!explicitEscalation) return "";
 
-  if (name === "shell_command" || name === "exec_command") return "review";
+  if (["exec", "shell_command", "exec_command"].includes(name) || /exec_command\s*\(/.test(rawArguments)) return "review";
   return "probe_review_ui";
 }
 
@@ -770,7 +776,7 @@ function handleDockConfirmation(source = state.currentAgent) {
     chooseCodexApprovalOption2((ok, reason) => {
       if (!ok) {
         const title = task?.title || `${agentMeta.codex.agentName} task`;
-        const statusText = reason === "accessibility_denied" ? "open Codex" : "review";
+        const statusText = reason === "accessibility_denied" ? "enable ChatGPT Accessibility" : "review";
         syncRealCodexTask("needs_input", statusText, {
           title,
           phase: "review",
@@ -807,7 +813,12 @@ function codexApprovalUiVisible(callback) {
     'tell application "System Events"',
     'set foundReview to false',
     'repeat with proc in application processes',
-    'if (name of proc contains "Codex") then',
+    'set procName to name of proc as text',
+    'set procBundle to ""',
+    'try',
+    'set procBundle to bundle identifier of proc as text',
+    'end try',
+    'if (procName contains "Codex" or procName contains "ChatGPT" or procBundle is "com.openai.codex") then',
     'set uiText to ""',
     'try',
     'repeat with w in windows of proc',
@@ -828,6 +839,9 @@ function codexApprovalUiVisible(callback) {
     'if uiText contains "don\'t ask again" then set foundReview to true',
     'if uiText contains "Don’t ask again" then set foundReview to true',
     'if uiText contains "Don\'t ask again" then set foundReview to true',
+    'if uiText contains "允许一次" then set foundReview to true',
+    'if uiText contains "Allow once" then set foundReview to true',
+    'if uiText contains "拒绝" and uiText contains "允许" then set foundReview to true',
     'if uiText contains "提交" and uiText contains "跳过" and uiText contains "询问" then set foundReview to true',
     'end if',
     'end repeat',
@@ -879,10 +893,27 @@ function chooseCodexApprovalOption2(callback = () => {}) {
     'end try',
     'delay 0.8',
     'tell application "System Events"',
-    'set codexProcesses to application processes whose name contains "Codex"',
+    'set codexProcesses to application processes whose bundle identifier is "com.openai.codex"',
+    'if (count of codexProcesses) is 0 then set codexProcesses to application processes whose name contains "ChatGPT"',
+    'if (count of codexProcesses) is 0 then set codexProcesses to application processes whose name contains "Codex"',
     'if (count of codexProcesses) is 0 then return "no_codex_process"',
     'set frontmost of item 1 of codexProcesses to true',
     'delay 0.35',
+    'set clickedAllow to false',
+    'try',
+    'repeat with uiElement in entire contents of window 1 of item 1 of codexProcesses',
+    'try',
+    'set elementRole to role of uiElement as text',
+    'set elementName to name of uiElement as text',
+    'if elementRole is "AXButton" and (elementName contains "允许一次" or elementName contains "Allow once") then',
+    'perform action "AXPress" of uiElement',
+    'set clickedAllow to true',
+    'exit repeat',
+    'end if',
+    'end try',
+    'end repeat',
+    'end try',
+    'if clickedAllow then return "clicked_allow_once"',
     'key code 19',
     'delay 0.08',
     'key code 36',
@@ -892,24 +923,32 @@ function chooseCodexApprovalOption2(callback = () => {}) {
   execFile("osascript", script.flatMap((line) => ["-e", line]), { timeout: 2500 }, (error, stdout = "", stderr = "") => {
     if (error) {
       const detail = String(stderr || error.message || "");
-      const reason = /-25211|辅助访问|assistive|accessibility/i.test(detail) ? "accessibility_denied" : "script_failed";
+      const reason = /-25211|1002|不允许发送按键|辅助访问|assistive|accessibility/i.test(detail) ? "accessibility_denied" : "script_failed";
       console.warn(`Codex review option 2 failed (${reason}):`, detail);
+      if (reason === "accessibility_denied") {
+        execFile("open", ["x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"], { timeout: 4000 }, () => {});
+      }
       openAgentOnMac("codex");
       finish(false, reason);
       return;
     }
-    console.log(`Codex review option 2 sent: ${String(stdout).trim() || "ok"}`);
+    const result = String(stdout).trim();
+    if (result === "no_codex_process") {
+      console.warn("Codex review option 2 failed: ChatGPT/Codex process not found");
+      finish(false, "process_not_found");
+      return;
+    }
+    console.log(`Codex review option 2 sent: ${result || "ok"}`);
     finish(true);
   });
 }
 
-function holdCodexReview(ms = 12000) {
+function holdCodexReview(ms = 20000) {
   codexReviewHoldUntil = Math.max(codexReviewHoldUntil, Date.now() + ms);
 }
 
 function codexReviewHoldActive() {
-  const task = taskForAgent("codex");
-  return Date.now() < codexReviewHoldUntil && task?.status === "needs_input";
+  return Date.now() < codexReviewHoldUntil;
 }
 
 function releaseCodexReviewHold() {
@@ -1525,6 +1564,7 @@ function textFromPayload(payload) {
   if (typeof payload.message === "string") return payload.message;
   if (typeof payload.output === "string") return payload.output;
   if (typeof payload.arguments === "string") return payload.arguments;
+  if (typeof payload.input === "string") return payload.input;
   if (Array.isArray(payload.content)) {
     return payload.content.map((item) => item?.text || "").filter(Boolean).join("\n");
   }
@@ -1570,9 +1610,17 @@ function claudeOutputLooksFailed(result = {}) {
   );
 }
 
-function handleCodexRolloutEvent(event) {
+function handleCodexRolloutEvent(event, { replay = false } = {}) {
   const payload = event.payload || {};
   const payloadType = payload.type || "";
+
+  const isApprovalToolCall = event.type === "response_item" &&
+    (payloadType === "function_call" || payloadType === "custom_tool_call") &&
+    Boolean(codexInterventionPhase(payload));
+  if (codexReviewHoldActive() && !isApprovalToolCall) {
+    console.log(`Codex monitor event: ${payloadType || event.type} ignored during review hold`);
+    return;
+  }
 
   if (event.type === "event_msg" && payloadType === "user_message") {
     console.log("Codex monitor event: user_message -> running");
@@ -1592,6 +1640,10 @@ function handleCodexRolloutEvent(event) {
     const args = textFromPayload(payload);
     const interventionPhase = codexInterventionPhase(payload);
     if (interventionPhase === "review") {
+      if (replay) {
+        console.log("Codex monitor replay: completed command approval ignored");
+        return;
+      }
       console.log("Codex monitor event: explicit command approval -> needs_input");
       holdCodexReview();
       syncRealCodexTask("needs_input", "review", { phase: "review" });
@@ -1608,6 +1660,21 @@ function handleCodexRolloutEvent(event) {
   }
 
   if (event.type === "response_item" && payloadType === "custom_tool_call") {
+    const interventionPhase = codexInterventionPhase(payload);
+    if (interventionPhase === "review") {
+      if (replay) {
+        console.log("Codex monitor replay: completed custom approval ignored");
+        return;
+      }
+      console.log("Codex monitor event: custom command approval -> needs_input");
+      holdCodexReview();
+      syncRealCodexTask("needs_input", "permission requested", { phase: "review" });
+      return;
+    }
+    if (interventionPhase === "probe_review_ui") {
+      console.log("Codex monitor event: possible custom approval -> probing UI");
+      scheduleCodexApprovalReview();
+    }
     console.log("Codex monitor event: custom_tool_call -> running");
     const phase = codexPhaseForTool(payload.name || "", textFromPayload(payload));
     syncRealCodexTask("running", phase, { phase });
@@ -1699,7 +1766,7 @@ function latestRolloutFile() {
   return latest;
 }
 
-function processCodexLogChunk(chunk, { sinceMs = 0 } = {}) {
+function processCodexLogChunk(chunk, { sinceMs = 0, replay = false } = {}) {
   const lines = chunk.split("\n");
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -1709,7 +1776,7 @@ function processCodexLogChunk(chunk, { sinceMs = 0 } = {}) {
         const eventTime = Date.parse(event.timestamp || "");
         if (!Number.isFinite(eventTime) || eventTime < sinceMs) continue;
       }
-      handleCodexRolloutEvent(event);
+      handleCodexRolloutEvent(event, { replay });
     } catch {
       // Ignore partially-written JSONL lines; the next poll will catch completed records.
     }
@@ -1740,7 +1807,7 @@ function pollCodexSessions() {
       const start = Math.max(0, size - codexInitialTailBytes);
       codexLogOffset = size;
       if (start < size) {
-        processCodexLogBuffer(readFileSync(latest).subarray(start), { sinceMs: Date.now() - codexInitialReplayMs });
+        processCodexLogBuffer(readFileSync(latest).subarray(start), { sinceMs: Date.now() - codexInitialReplayMs, replay: true });
       }
       console.log(`Codex session monitor attached: ${latest}`);
       setAdapterHealth("codex", "connected", "Codex session 实时监听中");
@@ -3066,6 +3133,25 @@ const server = createServer(async (req, res) => {
     }
   }
 
+  if (url.pathname === "/api/agent-action" && req.method === "POST") {
+    try {
+      const body = await readBody(req);
+      const agent = agentFromSource(String(body.agent || body.source || state.currentAgent));
+      const action = String(body.action || "");
+      if (!AGENTS.includes(agent)) return sendJson(res, 400, { ok: false, error: "Unknown agent" });
+      if (action === "open_agent") {
+        openAgentOnMac(agent);
+      } else if (action === "accept_confirmation") {
+        handleDockConfirmation(agent);
+      } else {
+        return sendJson(res, 400, { ok: false, error: "Unknown action" });
+      }
+      return sendJson(res, 200, { ok: true, state: publicState() });
+    } catch (error) {
+      return sendJson(res, 400, { ok: false, error: error.message });
+    }
+  }
+
   if (url.pathname === "/api/claude-test-event" && req.method === "POST") {
     try {
       const body = await readBody(req);
@@ -3087,6 +3173,17 @@ const server = createServer(async (req, res) => {
   if (url.pathname === "/api/codex-test-event" && req.method === "POST") {
     try {
       const body = await readBody(req);
+      if (body.simulateApproval === true) {
+        handleCodexRolloutEvent({
+          type: "response_item",
+          payload: {
+            type: "custom_tool_call",
+            name: "exec",
+            input: 'await tools.exec_command({ cmd: "swiftc app.swift", sandbox_permissions: "require_escalated", justification: "Compile the app" })'
+          }
+        });
+        return sendJson(res, 200, { ok: true, state: publicState() });
+      }
       const status = String(body.status || "running");
       const title = summarizeTitleForDock(body.title || "Real Codex smoke test", "Codex test");
       const statusText = String(body.statusText || "testing real Codex bridge...").slice(0, 90);

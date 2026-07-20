@@ -1,5 +1,14 @@
 # PeekDock 架构记录
 
+## 2026-07-20 Desktop overlay interaction and approval pass
+
+- `desktop-overlay/PeekDockOverlay.swift` 的原生桌面悬浮屏使用 210 × 390 基准画布，即高:宽 = 13:7 的竖向小屏；内部字体、图像、进度条、按钮、圆角和阴影统一等比缩放。
+- Overlay 支持按住左键/触控板拖动位置，两指横向滑动或点击底部四个页点切换 Agent。单击主体是应用显示/收起 toggle：对应 AI 应用当前在前台时直接通过 `NSRunningApplication.hide()` 收起，否则通过 `/api/agent-action` 激活应用或对应浏览器标签。
+- 右下角缩放拖拽区将宽度限制为 140–420 pt，始终保持 7:13 宽高比；用户尺寸通过 `UserDefaults` 保留。
+- Codex monitor 现在识别桌面客户端实际使用的 `custom_tool_call` 中 `sandbox_permissions=require_escalated` 事件，进入稳定的 `needs_input` review hold；启动时的历史日志回放不会伪造新审批。
+- Overlay 在 Codex 审批态显示“允许并继续”，bridge 优先通过 macOS Accessibility 点击 ChatGPT/Codex 的“允许一次”，再使用键盘选项降级；未授权时打开系统辅助功能设置。
+- Web 控制台不再展示语音/文本派发 composer，保留 Agent 状态、队列、simulator 和事件流。
+
 ## 2026-07-17 Real data and dual display contract
 
 - `runtime-bridge/server.mjs` 仍是唯一权威状态源，但默认 `dataMode=real`；Mock 必须通过 `PEEKDOCK_DEMO_MODE=1` / `npm run demo` 显式开启。

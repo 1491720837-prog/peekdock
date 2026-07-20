@@ -1,5 +1,16 @@
 # PeekDock 进度日志
 
+## 2026-07-20 Overlay interaction, portrait ratio, and approval repair
+
+- Removed the voice/text task composer from the web console while preserving status monitoring, queue, simulator, and event stream.
+- Corrected the desktop overlay to a scalable portrait canvas with height:width = 13:7 and visually verified the live window.
+- Added click-and-drag movement, two-finger horizontal Agent switching, four clickable page dots, and single-click app activation.
+- Upgraded the Agent body click to a display toggle: clicking an already-active ChatGPT/Trae/Chrome/Safari app hides it, while clicking again reopens the correct Agent context.
+- Added a stable Codex approval screen with an `允许并继续` button and a bridge action endpoint.
+- Fixed live approval detection for desktop `custom_tool_call` events carrying `require_escalated`, ignored completed approvals during startup replay, and held review state against unrelated session updates.
+- Updated ChatGPT/Codex process discovery to use bundle id `com.openai.codex`; the approval helper targets `允许一次` directly and opens Accessibility settings when permission is missing.
+- Verified Swift compilation, JavaScript syntax, the live approval UI, and all 6 Node integration tests.
+
 ## 2026-07-17 Real-Agent + Hardware/Overlay Distribution Pass
 
 - 默认运行模式从 Mock 改为真实 Agent：Codex CLI/session、Claude Code CLI/project、即梦 Chrome 页面和通用 webhook 均进入统一 adapter health 与任务状态流。

@@ -41,36 +41,6 @@
           <p>语音派活、统一看状态。主屏继续创作，重要进展会自己浮上来。</p>
         </section>
 
-        <section class="composer panel">
-          <div class="composer-topline">
-            <label for="agentSelect">发送给</label>
-            <select id="agentSelect" aria-label="选择 Agent">
-              <option value="codex">Codex · 工程师</option>
-              <option value="claude">Claude · 策划</option>
-              <option value="jimeng">Jimeng · 艺术家</option>
-              <option value="browser">Browser Agent · 侦探</option>
-            </select>
-            <select id="scenarioSelect" aria-label="选择演示结果">
-              <option value="done">自动完成</option>
-              <option value="input_required">需要输入</option>
-              <option value="error">演示错误</option>
-            </select>
-          </div>
-          <textarea id="promptInput" maxlength="140" rows="3" placeholder="说点什么，或输入任务…">帮我修一下首页按钮样式 bug，并检查响应式布局</textarea>
-          <div class="voice-feedback" id="voiceFeedback" aria-live="polite">
-            <span class="voice-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
-            <span id="voiceState">可使用语音，也可直接输入文字</span>
-          </div>
-          <div class="composer-actions">
-            <button class="voice-button" id="voiceButton" type="button" aria-pressed="false">
-              <span class="mic-icon" aria-hidden="true"></span><b>按下说话</b>
-            </button>
-            <button class="send-button" id="sendButton" type="button">
-              发送任务 <span aria-hidden="true">↗</span>
-            </button>
-          </div>
-        </section>
-
         <section class="queue panel">
           <div class="panel-heading queue-heading">
             <div><span class="eyebrow">LIVE QUEUE</span><h2>任务状态流</h2></div>

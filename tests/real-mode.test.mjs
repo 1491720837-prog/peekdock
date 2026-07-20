@@ -67,4 +67,21 @@ test("real mode uses desktop overlay and accepts normalized Agent events", async
   assert.equal(state.tasksByAgent.browser.taskId, "browser-real-1");
   assert.equal(state.tasksByAgent.browser.status, "completed");
   assert.equal(state.adapterHealth.browser.state, "connected");
+
+  const approval = await fetch(`${baseUrl}/api/codex-test-event`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ simulateApproval: true })
+  });
+  assert.equal(approval.status, 200);
+  const approvalPayload = await approval.json();
+  assert.equal(approvalPayload.state.tasksByAgent.codex.status, "needs_input");
+  assert.equal(approvalPayload.state.tasksByAgent.codex.statusText, "review");
+
+  const invalidAction = await fetch(`${baseUrl}/api/agent-action`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ agent: "codex", action: "not-supported" })
+  });
+  assert.equal(invalidAction.status, 400);
 });
